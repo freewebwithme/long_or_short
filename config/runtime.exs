@@ -1,4 +1,15 @@
 import Config
+import Dotenv
+
+source!([
+  Path.absname("/env/.env"),
+  Path.absname("/env/.env.#{config_evn()}"),
+  System.get_env()
+])
+
+# Example for external service keys
+# config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string)
+# config :long_or_short, :benzinga_api_key, env!("BENZINGA_API_KEY", :string)
 
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the

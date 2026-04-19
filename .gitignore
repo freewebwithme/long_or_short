@@ -35,3 +35,4 @@ long_or_short-*.tar
 npm-debug.log
 /assets/node_modules/
 
+/envs/
