@@ -6,6 +6,39 @@ defmodule LongOrShort.Accounts.User do
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication]
 
+  postgres do
+    table "users"
+    repo LongOrShort.Repo
+  end
+
+  identities do
+    identity :unique_email, [:email]
+  end
+
+  attributes do
+    uuid_v7_primary_key :id
+
+    attribute :email, :ci_string do
+      allow_nil? false
+      public? true
+    end
+
+    attribute :hashed_password, :string do
+      allow_nil? false
+      sensitive? true
+    end
+
+    attribute :confirmed_at, :utc_datetime_usec
+
+    attribute :role, :atom do
+      allow_nil? false
+      default :trader
+      public? true
+      constraints one_of: [:admin, :trader]
+      description "Authorization role. :admin grants write access to master data resources."
+    end
+  end
+
   authentication do
     add_ons do
       log_out_everywhere do
@@ -48,11 +81,6 @@ defmodule LongOrShort.Accounts.User do
     end
   end
 
-  postgres do
-    table "users"
-    repo LongOrShort.Repo
-  end
-
   actions do
     defaults [:read]
 
@@ -61,6 +89,12 @@ defmodule LongOrShort.Accounts.User do
       argument :subject, :string, allow_nil?: false
       get? true
       prepare AshAuthentication.Preparations.FilterBySubject
+    end
+
+    update :update do
+      primary? true
+      require_atomic? false
+      accept []
     end
 
     update :change_password do
@@ -228,25 +262,5 @@ defmodule LongOrShort.Accounts.User do
     bypass AshAuthentication.Checks.AshAuthenticationInteraction do
       authorize_if always()
     end
-  end
-
-  attributes do
-    uuid_primary_key :id
-
-    attribute :email, :ci_string do
-      allow_nil? false
-      public? true
-    end
-
-    attribute :hashed_password, :string do
-      allow_nil? false
-      sensitive? true
-    end
-
-    attribute :confirmed_at, :utc_datetime_usec
-  end
-
-  identities do
-    identity :unique_email, [:email]
   end
 end
