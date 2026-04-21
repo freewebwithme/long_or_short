@@ -55,4 +55,15 @@ defmodule LongOrShort.DataCase do
       end)
     end)
   end
+
+  @doc """
+  Checks whether an `Ash.Error.Invalid` carries an error on the given field.
+  """
+  def error_on_field?(%Ash.Error.Invalid{errors: errors}, field) do
+    Enum.any?(errors, fn
+      %{field: ^field} -> true
+      %{fields: fields} when is_list(fields) -> field in fields
+      _ -> false
+    end)
+  end
 end

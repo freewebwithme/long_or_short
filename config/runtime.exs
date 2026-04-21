@@ -1,11 +1,13 @@
 import Config
-import Dotenv
+# import Dotenv
 
-source!([
-  Path.absname("/env/.env"),
-  Path.absname("/env/.env.#{config_evn()}"),
-  System.get_env()
-])
+# env_dir_prefix = System.get_env("RELEASE_ROOT") || Path.expand("./envs")
+
+# source!([
+#   Path.absname(".env", env_dir_prefix),
+#   Path.absname(".#{config_env()}.env", env_dir_prefix),
+#   System.get_env()
+# ])
 
 # Example for external service keys
 # config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string)

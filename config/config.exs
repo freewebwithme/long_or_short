@@ -38,24 +38,26 @@ config :spark,
     "Ash.Resource": [
       section_order: [
         :admin,
-        :authentication,
-        :token,
-        :user_identity,
+        :multitenancy,
         :postgres,
+        :identities,
+        :attributes,
+        :relationships,
+        :cloak,
+        :calculations,
+        :aggregates,
+        :authentication,
+        :tokens,
         :resource,
         :code_interface,
         :actions,
+        :forms,
+        :changes,
+        :validations,
         :policies,
         :pub_sub,
         :preparations,
-        :changes,
-        :validations,
-        :multitenancy,
-        :attributes,
-        :relationships,
-        :calculations,
-        :aggregates,
-        :identities
+        :paper_trail
       ]
     ],
     "Ash.Domain": [
@@ -66,7 +68,7 @@ config :spark,
 config :long_or_short,
   ecto_repos: [LongOrShort.Repo],
   generators: [timestamp_type: :utc_datetime],
-  ash_domains: [LongOrShort.Accounts]
+  ash_domains: [LongOrShort.Accounts, LongOrShort.Tickers]
 
 # Configure the endpoint
 config :long_or_short, LongOrShortWeb.Endpoint,
