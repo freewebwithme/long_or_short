@@ -68,7 +68,7 @@ config :spark,
 config :long_or_short,
   ecto_repos: [LongOrShort.Repo],
   generators: [timestamp_type: :utc_datetime],
-  ash_domains: [LongOrShort.Accounts, LongOrShort.Tickers]
+  ash_domains: [LongOrShort.Accounts, LongOrShort.News, LongOrShort.Tickers]
 
 # Configure the endpoint
 config :long_or_short, LongOrShortWeb.Endpoint,
