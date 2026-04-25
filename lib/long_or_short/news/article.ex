@@ -1,0 +1,222 @@
+defmodule LongOrShort.News.Article do
+  @moduledoc """
+  A single news article scoped to a single ticker.
+
+  When a source article mentions multiple tickers (e.g. "BTBD, MSTR,
+  RIOT all rally on crypto news"), the feeder splits it into one
+  Article row per ticker. This keeps per-ticker timeline queries
+  trivial (`WHERE ticker_id = X`) at the cost of storing the title
+  text multiple times — an acceptable trade-off for the MVP given
+  typical small-cap news tags 1–3 tickers.
+
+  ## Identity
+
+  Uniqueness is enforced on `[source, external_id, ticker_id]`. The
+  composite handles the split-by-ticker pattern above and keeps the
+  integrity check close to how feeders actually produce data.
+
+  ## Ticker resolution
+
+  Articles accept a `symbol` argument instead of `ticker_id`. The
+  `:ingest` action resolves the symbol to a Ticker via upsert — if
+  the Ticker does not exist yet, it is created with just the symbol.
+  Other fields (float, company_name) can be enriched later by the
+  Ticker feeder.
+
+  ## Deduplication
+
+  Two layers:
+
+  * **`News.Dedup` (ETS, 24h TTL)** — cheap in-memory check before
+    the DB call, scoped to `title + ticker`.
+  * **`content_hash` + `[source, external_id, ticker_id]` identity**
+    — permanent DB-level guarantees, queryable.
+  """
+
+  use Ash.Resource,
+    otp_app: :long_or_short,
+    domain: LongOrShort.News,
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
+
+  alias LongOrShort.News.Changes.ComputeContentHash
+
+  postgres do
+    table "articles"
+    repo LongOrShort.Repo
+
+    references do
+      reference :ticker, on_delete: :restrict, on_update: :update
+    end
+  end
+
+  identities do
+    identity :unique_source_external_ticker, [:source, :external_id, :ticker_id]
+  end
+
+  attributes do
+    uuid_v7_primary_key :id
+
+    create_timestamp :fetched_at
+    update_timestamp :updated_at
+
+    attribute :source, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:benzinga, :sec, :pr_newswire, :other]
+      description "Originating news provicer."
+    end
+
+    attribute :external_id, :string do
+      allow_nil? false
+      public? true
+      description "The source's own identifier for this article."
+    end
+
+    attribute :title, :string do
+      allow_nil? false
+      public? true
+    end
+
+    attribute :summary, :string do
+      public? true
+      description "Short teaser or summary from the source. May be nil for SEC filings."
+    end
+
+    attribute :url, :string do
+      public? true
+      description "Canonical URL at the source."
+    end
+
+    attribute :raw_category, :string do
+      public? true
+      description "Source-provided category label, stored verbatim for audit."
+    end
+
+    attribute :sentiment, :atom do
+      public? true
+      default :unknown
+      constraints one_of: [:positive, :negative, :neutral, :unknown]
+      description "Source-provided sentiment, where available (e.g. Benzinga)."
+    end
+
+    attribute :content_hash, :string do
+      public? true
+      description "SHA-256 of title + summary. Populated by ComputeContentHash change."
+    end
+
+    attribute :published_at, :utc_datetime_usec do
+      allow_nil? false
+      public? true
+      description "When the source published the article."
+    end
+  end
+
+  relationships do
+    belongs_to :ticker, LongOrShort.Tickers.Ticker do
+      allow_nil? false
+      attribute_writable? true
+      public? true
+    end
+  end
+
+  actions do
+    defaults [:read, :destroy]
+
+    # Public-ish create — accepts ticker_id directly. Used internally or
+    # when the caller has already resolved the Ticker. For feeder use,
+    # prefer :ingest.
+    create :create do
+      primary? true
+
+      accept [
+        :source,
+        :external_id,
+        :title,
+        :summary,
+        :url,
+        :raw_category,
+        :sentiment,
+        :published_at,
+        :ticker_id
+      ]
+
+      change ComputeContentHash
+    end
+
+    # Feeder-friendly upsert. Takes a :symbol argument and resolves it to
+    # a Ticker (creating a minimal one if it doesn't exist yet). Idempotent
+    # on (source, external_id, ticker_id).
+    create :ingest do
+      description """
+      Upsert an article from an external feeder. Accepts `symbol` and
+      handles Ticker resolution internally. Idempotent — calling with
+      the same (source, external_id, symbol) returns the same article.
+      """
+
+      upsert? true
+      upsert_identity :unique_source_external_ticker
+
+      accept [
+        :source,
+        :external_id,
+        :title,
+        :summary,
+        :url,
+        :raw_category,
+        :sentiment,
+        :published_at
+      ]
+
+      argument :symbol, :string do
+        allow_nil? false
+        description "Ticker symbol. Ticker is created if it doesn't exist."
+      end
+
+      # Upsert the ticker by symbol; wire up the resulting ticker_id.
+      # `value_is_key: :symbol` tells manage_relationship to treat the
+      # string as the lookup key rather than a primary key.
+      change manage_relationship(:symbol, :ticker,
+               value_is_key: :symbol,
+               on_lookup: :relate,
+               on_no_match: {:create, :upsert_by_symbol},
+               use_identities: [:unique_symbol]
+             )
+
+      change ComputeContentHash
+    end
+
+    read :by_ticker do
+      argument :ticker_id, :uuid, allow_nil?: false
+
+      filter expr(ticker_id == ^arg(:ticker_id))
+
+      prepare build(sort: [published_at: :desc])
+    end
+
+    read :recent do
+      argument :limit, :integer, default: 50
+
+      prepare build(sort: [published_at: :desc])
+      prepare build(limit: arg(:limit))
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Policies — mirrors Ticker pattern.
+  # See LON-15: SystemActor bypass is a MVP shortcut.
+  # ─────────────────────────────────────────────────────────────────────
+  policies do
+    bypass actor_attribute_equals(:system?, true) do
+      authorize_if always()
+    end
+
+    bypass actor_attribute_equals(:role, :admin) do
+      authorize_if always()
+    end
+
+    policy action_type(:read) do
+      authorize_if actor_present()
+    end
+  end
+end

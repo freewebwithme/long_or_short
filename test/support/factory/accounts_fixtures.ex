@@ -36,4 +36,9 @@ defmodule LongOrShort.AccountsFixtures do
 
     user_with_role
   end
+
+  @doc """
+  Returns a SystemActor for use in tests that need a trusted caller.
+  """
+  def system_actor, do: LongOrShort.Accounts.SystemActor.new("test")
 end

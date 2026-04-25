@@ -41,7 +41,7 @@ defmodule LongOrShort.TickersFixtures do
   Creates a Ticker using the SystemActor (bypass policies).
   Use this when the test is not about authorization.
   """
-  def create_ticker(overrides \\ %{}) do
+  def build_ticker(overrides \\ %{}) do
     attrs = valid_ticker_attrs(overrides)
 
     case Tickers.create_ticker(attrs, actor: SystemActor.new()) do
@@ -56,9 +56,4 @@ defmodule LongOrShort.TickersFixtures do
         """
     end
   end
-
-  @doc """
-  Returns a SystemActor for use in tests that need a trusted caller.
-  """
-  def system_actor, do: SystemActor.new("test")
 end

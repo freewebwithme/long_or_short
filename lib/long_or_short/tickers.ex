@@ -28,6 +28,7 @@ defmodule LongOrShort.Tickers do
       define :get_ticker_by_symbol, action: :by_symbol, args: [:symbol]
       define :list_active_tickers, action: :active
       define :list_tickers, action: :read
+      define :destroy_ticker, action: :destroy
     end
   end
 end
