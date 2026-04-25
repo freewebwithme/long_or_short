@@ -11,6 +11,13 @@ defmodule LongOrShort.News.Article do
 
   ## Identity
 
+  The `:ingest` action is an upsert on `[source, external_id,
+  ticker_id]`. On conflict, content fields (title, summary, url,
+  raw_category, sentiment, content_hash) are **last-writer-wins**;
+  identity columns and `published_at`/`fetched_at` are preserved.
+  Feeders can re-emit corrected payloads without disturbing timeline
+  ordering.
+
   Uniqueness is enforced on `[source, external_id, ticker_id]`. The
   composite handles the split-by-ticker pattern above and keeps the
   integrity check close to how feeders actually produce data.
@@ -150,12 +157,31 @@ defmodule LongOrShort.News.Article do
     create :ingest do
       description """
       Upsert an article from an external feeder. Accepts `symbol` and
-      handles Ticker resolution internally. Idempotent — calling with
-      the same (source, external_id, symbol) returns the same article.
+      handles Ticker resolution internally.
+
+      On conflict `(source, external_id, ticker_id)`, content fields
+      (`title`, `summary`, `url`, `raw_category`, `sentiment`,
+      `content_hash`) are overwritten with the latest payload — feeders
+      may correct typos or refine sentiment after first publish. The
+      identity columns (`source`, `external_id`, `ticker_id`),
+      `published_at`, and `fetched_at` are preserved from the original
+      create so timeline ordering stays stable across re-ingests.
       """
 
       upsert? true
       upsert_identity :unique_source_external_ticker
+
+      # Explicit list of fields to overwrite on conflict. Excludes the
+      # identity columns and `published_at`/`fetched_at` so re-ingests
+      # don't shift timeline position.
+      upsert_fields [
+        :title,
+        :summary,
+        :url,
+        :raw_category,
+        :sentiment,
+        :content_hash
+      ]
 
       accept [
         :source,
