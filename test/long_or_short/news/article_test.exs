@@ -169,25 +169,59 @@ defmodule LongOrShort.News.ArticleTest do
       assert first.id == second.id
     end
 
-    test "updates content fields when ingesting same identity twice" do
+    test "overwrites content fields on re-ingest (last-writer-wins)" do
       base =
         valid_article_attrs(%{
           symbol: "UPDATED",
           source: :benzinga,
           external_id: "updated-1",
-          title: "Original title"
+          title: "Original title",
+          summary: "Original summary",
+          sentiment: :positive
         })
 
       {:ok, first} = News.ingest_article(base, authorize?: false)
 
       {:ok, second} =
         News.ingest_article(
-          Map.put(base, :title, "Revised title"),
+          Map.merge(base, %{
+            title: "Revised title",
+            summary: "Revised summary",
+            sentiment: :negative
+          }),
           authorize?: false
         )
 
       assert first.id == second.id
       assert second.title == "Revised title"
+      assert second.summary == "Revised summary"
+      assert second.sentiment == :negative
+      # content_hash must track title/summary changes
+      refute first.content_hash == second.content_hash
+    end
+
+    test "preserves published_at and fetched_at on re-ingest" do
+      original_published = ~U[2026-04-20 12:00:00.000000Z]
+
+      base =
+        valid_article_attrs(%{
+          symbol: "STABLE",
+          source: :benzinga,
+          external_id: "stable-1",
+          published_at: original_published
+        })
+
+      {:ok, first} = News.ingest_article(base, authorize?: false)
+
+      {:ok, second} =
+        News.ingest_article(
+          Map.put(base, :published_at, ~U[2026-04-21 09:00:00.000000Z]),
+          authorize?: false
+        )
+
+      assert first.id == second.id
+      assert DateTime.compare(second.published_at, original_published) == :eq
+      assert DateTime.compare(second.fetched_at, first.fetched_at) == :eq
     end
 
     test "creates separate rows when same external_id is used for different tickers" do
