@@ -17,6 +17,7 @@ defmodule LongOrShort.Application do
          Application.fetch_env!(:long_or_short, Oban)
        )},
       {Phoenix.PubSub, name: LongOrShort.PubSub},
+      LongOrShort.News.Dedup,
       # Start a worker by calling: LongOrShort.Worker.start_link(arg)
       # {LongOrShort.Worker, arg},
       # Start to serve requests, typically the last entry
