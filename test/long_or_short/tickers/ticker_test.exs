@@ -67,7 +67,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "enforces unique symbol" do
-      create_ticker(%{symbol: "DUPE"})
+      build_ticker(%{symbol: "DUPE"})
 
       assert {:error, %Ash.Error.Invalid{} = error} =
                Tickers.create_ticker(
@@ -111,7 +111,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "treats different casings as the same symbol via unique constraint" do
-      create_ticker(%{symbol: "MSFT"})
+      build_ticker(%{symbol: "MSFT"})
 
       assert {:error, %Ash.Error.Invalid{}} =
                Tickers.create_ticker(
@@ -123,7 +123,7 @@ defmodule LongOrShort.Tickers.TickerTest do
 
   describe "update_ticker_price/3" do
     test "updates last_price and sets last_price_updated_at" do
-      ticker = create_ticker()
+      ticker = build_ticker()
       before = DateTime.utc_now()
 
       {:ok, updated} =
@@ -136,7 +136,7 @@ defmodule LongOrShort.Tickers.TickerTest do
 
     test "does not affect unrelated attributes" do
       ticker =
-        create_ticker(%{
+        build_ticker(%{
           symbol: "NVDA",
           company_name: "NVIDIA",
           float_shares: 2_000_000
@@ -164,7 +164,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "updates an existing ticker when symbol matches" do
-      existing = create_ticker(%{symbol: "OLDCO", sector: nil})
+      existing = build_ticker(%{symbol: "OLDCO", sector: nil})
 
       {:ok, same} =
         Tickers.upsert_ticker_by_symbol(
@@ -177,7 +177,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "matches existing record regardless of input casing" do
-      existing = create_ticker(%{symbol: "BTBD"})
+      existing = build_ticker(%{symbol: "BTBD"})
 
       {:ok, same} =
         Tickers.upsert_ticker_by_symbol(
@@ -193,7 +193,7 @@ defmodule LongOrShort.Tickers.TickerTest do
 
   describe "get_ticker_by_symbol/2" do
     test "returns the ticker when found" do
-      ticker = create_ticker(%{symbol: "GOOG"})
+      ticker = build_ticker(%{symbol: "GOOG"})
 
       {:ok, found} = Tickers.get_ticker_by_symbol("GOOG", actor: system_actor())
 
@@ -208,8 +208,8 @@ defmodule LongOrShort.Tickers.TickerTest do
 
   describe "list_active_tickers/1" do
     test "returns only active tickers" do
-      active = create_ticker(%{symbol: "ACT1", is_active: true})
-      _inactive = create_ticker(%{symbol: "DEAD1", is_active: false})
+      active = build_ticker(%{symbol: "ACT1", is_active: true})
+      _inactive = build_ticker(%{symbol: "DEAD1", is_active: false})
 
       {:ok, tickers} = Tickers.list_active_tickers(actor: system_actor())
 
@@ -228,7 +228,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     setup do
       # A ticker created via the bypass, so it exists regardless of the
       # actor under test.
-      ticker = create_ticker(%{symbol: "POLICY1"})
+      ticker = build_ticker(%{symbol: "POLICY1"})
       {:ok, ticker: ticker}
     end
 
