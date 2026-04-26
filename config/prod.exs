@@ -31,3 +31,7 @@ config :logger, level: :info
 
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.
+
+# Real news sources will be added here as they're built (Benzinga,
+# SEC EDGAR, etc.). Dummy is dev-only.
+config :long_or_short, enabled_news_sources: []

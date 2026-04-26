@@ -46,3 +46,6 @@ config :phoenix,
 
 config :long_or_short,
   news_dedup_cleanup_interval: 60_000
+
+# Tests start news sources explicitly via start_supervised! when needed.
+config :long_or_short, enabled_news_sources: []
