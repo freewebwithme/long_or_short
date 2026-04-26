@@ -56,5 +56,5 @@ defmodule LongOrShort.News.Source do
               {:ok, [article_attrs :: map()]}
               | {:error, reason :: term()}
 
-  @callback poll_intervalMs() :: pos_integer()
+  @callback poll_interval_ms() :: pos_integer()
 end
