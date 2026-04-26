@@ -1,7 +1,7 @@
-defmodule LongOrShort.News.Source.BackoffTest do
+defmodule LongOrShort.News.Sources.BackoffTest do
   use ExUnit.Case, async: true
 
-  alias LongOrShort.News.Source.Backoff
+  alias LongOrShort.News.Sources.Backoff
 
   describe "next_interval/2" do
     test "returns base_interval when retry_count is 0" do

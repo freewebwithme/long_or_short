@@ -7,7 +7,7 @@ defmodule LongOrShort.News.Source do
   HTTP/API access to its source. The common pipeline logic — first-
   poll scheduling, fetch → parse → dedup → ingest → broadcast,
   exponential backoff on errors — lives in
-  `LongOrShort.News.Source.Pipeline` so it can be unit-tested
+  `LongOrShort.News.Sources.Pipeline` so it can be unit-tested
   independently of any real source.
 
   ## Required callbacks

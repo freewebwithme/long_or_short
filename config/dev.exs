@@ -91,3 +91,8 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# News ingestion sources for development. Dummy generates synthetic
+# articles every 3 seconds for end-to-end pipeline validation.
+config :long_or_short,
+  enabled_news_sources: [LongOrShort.News.Sources.Dummy]

@@ -1,4 +1,4 @@
-defmodule LongOrShort.News.Source.Pipeline do
+defmodule LongOrShort.News.Sources.Pipeline do
   @moduledoc """
   Stateless helper for the polling lifecycle of `News.Source` feeders.
 
@@ -51,7 +51,7 @@ defmodule LongOrShort.News.Source.Pipeline do
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.News
   alias LongOrShort.News.Dedup
-  alias LongOrShort.News.Source.Backoff
+  alias LongOrShort.News.Sources.Backoff
 
   @poll_message :poll
   @broadcast_topic "news:articles"

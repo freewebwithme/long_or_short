@@ -1,4 +1,4 @@
-defmodule LongOrShort.News.Source.PipelineTest do
+defmodule LongOrShort.News.Sources.PipelineTest do
   @moduledoc """
   Tests for the polling pipeline helper.
 
@@ -17,7 +17,7 @@ defmodule LongOrShort.News.Source.PipelineTest do
 
   alias LongOrShort.News
   alias LongOrShort.News.Dedup
-  alias LongOrShort.News.Source.Pipeline
+  alias LongOrShort.News.Sources.Pipeline
 
   # ── MockSource ─────────────────────────────────────────────────
   defmodule MockSource do

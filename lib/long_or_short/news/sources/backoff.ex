@@ -1,4 +1,4 @@
-defmodule LongOrShort.News.Source.Backoff do
+defmodule LongOrShort.News.Sources.Backoff do
   @moduledoc """
   Exponential backoff calculations for news source feeders.
 
