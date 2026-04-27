@@ -54,7 +54,6 @@ defmodule LongOrShort.News.Sources.Pipeline do
   alias LongOrShort.News.Sources.Backoff
 
   @poll_message :poll
-  @broadcast_topic "news:articles"
 
   @doc """
   Initial state + first poll. Call from the feeder's `init/1`.
@@ -185,14 +184,8 @@ defmodule LongOrShort.News.Sources.Pipeline do
     {:noreply, next_state}
   end
 
-  # Placeholder broadcast — replaced by News.Events.broadcast_new_article/1
-  # in LON-20.
   defp broadcast_new_article(article) do
-    Phoenix.PubSub.broadcast(
-      LongOrShort.PubSub,
-      @broadcast_topic,
-      {:new_article, article}
-    )
+    LongOrShort.News.Events.broadcast_new_article(article)
   end
 
   defp schedule_immediately, do: Process.send_after(self(), @poll_message, 0)
