@@ -18,8 +18,7 @@ defmodule LongOrShort.Application do
        )},
       {Phoenix.PubSub, name: LongOrShort.PubSub},
       LongOrShort.News.Dedup,
-      # Start a worker by calling: LongOrShort.Worker.start_link(arg)
-      # {LongOrShort.Worker, arg},
+      LongOrShort.News.SourceSupervisor,
       # Start to serve requests, typically the last entry
       LongOrShortWeb.Endpoint,
       {AshAuthentication.Supervisor, [otp_app: :long_or_short]}
