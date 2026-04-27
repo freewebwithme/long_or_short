@@ -1,9 +1,9 @@
 defmodule LongOrShort.AccountsFixtures do
-  def admin_user_fixture do
+  def build_admin_user do
     register_user!(%{role: :admin, email_prefix: "admin"})
   end
 
-  def trader_user_fixture do
+  def build_trader_user do
     register_user!(%{role: :trader, email_prefix: "trader"})
   end
 

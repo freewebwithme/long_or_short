@@ -247,7 +247,7 @@ defmodule LongOrShort.Tickers.TickerTest do
 
     # ── admin user ─────────────────────────────────────────────────────
     test "admin can create" do
-      admin = admin_user_fixture()
+      admin = build_admin_user()
 
       assert {:ok, _} =
                Tickers.create_ticker(
@@ -257,18 +257,18 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "admin can read", %{ticker: ticker} do
-      admin = admin_user_fixture()
+      admin = build_admin_user()
       assert {:ok, _} = Tickers.get_ticker_by_symbol(ticker.symbol, actor: admin)
     end
 
     # ── trader (non-admin authenticated) ──────────────────────────────
     test "trader can read", %{ticker: ticker} do
-      trader = trader_user_fixture()
+      trader = build_trader_user()
       assert {:ok, _} = Tickers.get_ticker_by_symbol(ticker.symbol, actor: trader)
     end
 
     test "trader cannot create" do
-      trader = trader_user_fixture()
+      trader = build_trader_user()
 
       assert {:error, %Ash.Error.Forbidden{}} =
                Tickers.create_ticker(
@@ -278,7 +278,7 @@ defmodule LongOrShort.Tickers.TickerTest do
     end
 
     test "trader cannot update", %{ticker: ticker} do
-      trader = trader_user_fixture()
+      trader = build_trader_user()
 
       assert {:error, %Ash.Error.Forbidden{}} =
                Tickers.update_ticker(ticker, %{company_name: "Hacked"}, actor: trader)
