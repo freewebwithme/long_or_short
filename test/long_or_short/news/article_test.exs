@@ -477,7 +477,7 @@ defmodule LongOrShort.News.ArticleTest do
     end
 
     test "admin can ingest" do
-      admin = admin_user_fixture()
+      admin = build_admin_user()
 
       assert {:ok, _} =
                News.ingest_article(
@@ -487,14 +487,14 @@ defmodule LongOrShort.News.ArticleTest do
     end
 
     test "trader can read", %{article: article} do
-      trader = trader_user_fixture()
+      trader = build_trader_user()
 
       {:ok, fetched} = News.get_article(article.id, actor: trader)
       assert fetched.id == article.id
     end
 
     test "trader cannot ingest" do
-      trader = trader_user_fixture()
+      trader = build_trader_user()
 
       assert {:error, %Ash.Error.Forbidden{}} =
                News.ingest_article(
