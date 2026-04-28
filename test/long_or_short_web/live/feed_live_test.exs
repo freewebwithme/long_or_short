@@ -44,7 +44,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
       {:ok, _view, html} = live(conn, ~p"/feed")
 
       assert html =~ "No articles yet"
-      assert html =~ "0 articles"
+      assert html =~ "0 update"
     end
 
     test "renders existing articles with title, ticker, source", %{conn: conn} do
@@ -60,7 +60,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ "Apple beats Q2 earnings"
       assert html =~ "AAPL"
       assert html =~ "benzinga"
-      assert html =~ "1 article"
+      assert html =~ "1 update"
     end
   end
 
@@ -93,7 +93,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
       assert html =~ "Tesla deliveries up 15%"
       assert html =~ "TSLA"
-      assert html =~ "1 article"
+      assert html =~ "1 update"
     end
 
     test "multiple broadcasts accumulate in the count", %{conn: conn} do
@@ -119,7 +119,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ "Nvidia headline 1"
       assert html =~ "Nvidia headline 2"
       assert html =~ "Nvidia headline 3"
-      assert html =~ "3 articles"
+      assert html =~ "3 updates"
     end
   end
 end

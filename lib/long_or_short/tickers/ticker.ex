@@ -41,7 +41,7 @@ defmodule LongOrShort.Tickers.Ticker do
     attribute :symbol, :string do
       allow_nil? false
       public? true
-      description "Trading symbol (e.g. NVDA, AAPL). Normailzed to uppercase"
+      description "Trading symbol (e.g. NVDA, AAPL). Normalized to uppercase"
     end
 
     attribute :company_name, :string, public?: true

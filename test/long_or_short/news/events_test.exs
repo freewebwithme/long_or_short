@@ -33,9 +33,12 @@ defmodule LongOrShort.News.EventsTest do
     test "multiple subscribers all receive the broadcast" do
       Events.subscribe()
 
+      parent = self()
+
       task =
         Task.async(fn ->
           Events.subscribe()
+          send(parent, :subscribed)
 
           receive do
             {:new_article, article} -> article.title
@@ -44,8 +47,7 @@ defmodule LongOrShort.News.EventsTest do
           end
         end)
 
-      # Give the task a beat to subscribe before we broadcast
-      Process.sleep(10)
+      assert_receive :subscribed, 500
 
       article = %LongOrShort.News.Article{title: "Fan-out"}
       :ok = Events.broadcast_new_article(article)
