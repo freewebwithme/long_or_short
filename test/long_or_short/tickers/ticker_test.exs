@@ -14,7 +14,7 @@ defmodule LongOrShort.Tickers.TickerTest do
   alias LongOrShort.Tickers.Ticker
 
   describe "create_ticker/2" do
-    test "creates a ticke with valid attributes" do
+    test "creates a ticker with valid attributes" do
       {:ok, ticker} =
         Tickers.create_ticker(
           %{

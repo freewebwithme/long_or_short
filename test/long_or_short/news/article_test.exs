@@ -275,7 +275,7 @@ defmodule LongOrShort.News.ArticleTest do
   end
 
   describe "content_hash" do
-    test "computes a hash fro mtitle and summary on create" do
+    test "computes a hash from title and summary on create" do
       ticker = build_ticker()
 
       {:ok, article} =
@@ -296,7 +296,7 @@ defmodule LongOrShort.News.ArticleTest do
       assert String.length(article.content_hash) == 64
     end
 
-    test "produces same has for identical title+summary" do
+    test "produces same hash for identical title+summary" do
       ticker_a = build_ticker(%{symbol: "HASHA"})
       ticker_b = build_ticker(%{symbol: "HASHB"})
 
