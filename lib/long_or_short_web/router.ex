@@ -62,15 +62,6 @@ defmodule LongOrShortWeb.Router do
         LongOrShortWeb.AuthOverrides,
         Elixir.AshAuthentication.Phoenix.Overrides.DaisyUI
       ]
-
-    # Remove this if you do not use the magic link strategy.
-    magic_sign_in_route(LongOrShort.Accounts.User, :magic_link,
-      auth_routes_prefix: "/auth",
-      overrides: [
-        LongOrShortWeb.AuthOverrides,
-        Elixir.AshAuthentication.Phoenix.Overrides.DaisyUI
-      ]
-    )
   end
 
   # Other scopes may use custom stacks.
