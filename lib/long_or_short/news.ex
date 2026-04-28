@@ -18,6 +18,8 @@ defmodule LongOrShort.News do
       define :list_articles_by_ticker, action: :by_ticker, args: [:ticker_id]
       define :list_recent_articles, action: :recent
       define :destroy_article, action: :destroy
+      define :get_article_content_hash, action: :get_content_hash,
+        args: [:source, :external_id, :symbol]
     end
   end
 end

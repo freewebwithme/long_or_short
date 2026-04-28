@@ -154,9 +154,13 @@ defmodule LongOrShort.News.Sources.Pipeline do
   end
 
   defp ingest(attrs) do
+    existing_hash = fetch_existing_hash(attrs)
+
     case News.ingest_article(attrs, actor: SystemActor.new()) do
       {:ok, article} ->
-        broadcast_new_article(article)
+        if existing_hash != article.content_hash do
+          broadcast_new_article(article)
+        end
         {:ok, article}
 
       {:error, reason} = err ->
@@ -167,6 +171,13 @@ defmodule LongOrShort.News.Sources.Pipeline do
         )
 
         err
+    end
+  end
+
+  defp fetch_existing_hash(%{source: source, external_id: external_id, symbol: symbol}) do
+    case News.get_article_content_hash(source, external_id, symbol, actor: SystemActor.new()) do
+      {:ok, [%{content_hash: hash} | _]} -> hash
+      {:error, _} -> nil
     end
   end
 
