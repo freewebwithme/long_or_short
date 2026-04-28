@@ -10,7 +10,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
 
   ## State shape
 
-  Pipeline owns two reserved keys in the GenServer state:
+  Pipeline owns one reserved keys in the GenServer state:
 
     * `:retry_count` — non-negative integer, advanced on `fetch_news`
       errors and reset on success. Drives `Source.Backoff`.

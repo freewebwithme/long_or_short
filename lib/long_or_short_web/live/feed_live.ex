@@ -39,15 +39,18 @@ defmodule LongOrShortWeb.FeedLive do
 
   @impl true
   def handle_info({:new_article, article}, socket) do
-    {:ok, article} =
-      News.get_article(article.id, load: [:ticker], actor: socket.assigns.current_user)
+    case News.get_article(article.id, load: [:ticker], actor: socket.assigns.current_user) do
+      {:ok, article} ->
+        socket =
+          socket
+          |> stream_insert(:articles, article, at: 0)
+          |> update(:article_count, &(&1 + 1))
 
-    socket =
-      socket
-      |> stream_insert(:articles, article, at: 0)
-      |> update(:article_count, &(&1 + 1))
+        {:noreply, socket}
 
-    {:noreply, socket}
+      {:error, _} ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -58,7 +61,7 @@ defmodule LongOrShortWeb.FeedLive do
         <div class="mb-6">
           <h1 class="text-2xl font-bold">News Feed</h1>
           <p class="text-sm opacity-60 mt-1">
-            {@article_count} {if @article_count == 1, do: "article", else: "articles"}
+            {@article_count} {if @article_count == 1, do: "update", else: "updates"} received
           </p>
         </div>
 

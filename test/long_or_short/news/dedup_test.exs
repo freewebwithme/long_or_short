@@ -105,7 +105,11 @@ defmodule LongOrShort.News.DedupTest do
       Dedup.check_and_mark(:benzinga, "old", "BTBD")
       assert Dedup.seen?(:benzinga, "old", "BTBD")
 
-      Process.sleep(1_100)
+      # Simulate TTL expiry — inject an already-expired timestamp directly into ETS
+      ttl_ms = Application.get_env(:long_or_short, :news_dedup_ttl_seconds, 86_400) * 1_000
+      expired_time = System.system_time(:millisecond) - (ttl_ms + 1_000)
+      key = :crypto.hash(:sha256, "benzinga|old|BTBD")
+      :ets.insert(:news_seen, {key, expired_time})
 
       Dedup.check_and_mark(:benzinga, "new", "AAPL")
 
