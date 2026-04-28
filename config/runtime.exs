@@ -1,17 +1,17 @@
 import Config
-# import Dotenv
+import Dotenvy
 
-# env_dir_prefix = System.get_env("RELEASE_ROOT") || Path.expand("./envs")
+env_dir_prefix = System.get_env("RELEASE_ROOT") || Path.expand("./envs")
 
-# source!([
-#   Path.absname(".env", env_dir_prefix),
-#   Path.absname(".#{config_env()}.env", env_dir_prefix),
-#   System.get_env()
-# ])
+source!([
+  Path.absname(".env", env_dir_prefix),
+  Path.absname(".#{config_env()}.env", env_dir_prefix),
+  System.get_env()
+])
 
 # Example for external service keys
-# config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string)
-# config :long_or_short, :benzinga_api_key, env!("BENZINGA_API_KEY", :string)
+config :long_or_short, :finnhub_api_key, env!("FINNHUB_API_KEY", :string?)
+config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string?)
 
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
@@ -37,54 +37,20 @@ config :long_or_short, LongOrShortWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :prod do
-  database_url =
-    System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
-      """
-
-  maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
-
   config :long_or_short, LongOrShort.Repo,
     # ssl: true,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    # For machines with several cores, consider starting multiple pools of `pool_size`
-    # pool_count: 4,
-    socket_options: maybe_ipv6
-
-  # The secret key base is used to sign/encrypt cookies and other secrets.
-  # A default value is used in config/dev.exs and config/test.exs but you
-  # want to use a different value for prod and you most likely don't want
-  # to check this value into version control, so we use an environment
-  # variable instead.
-  secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
-
-  host = System.get_env("PHX_HOST") || "example.com"
-
-  config :long_or_short, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+    url: env!("DATABASE_URL", :string!),
+    pool_size: env!("POOL_SIZE", :integer?) || 10,
+    socket_options: if(env!("ECTO_IPV6", :boolean?) == true, do: [:inet6], else: [])
 
   config :long_or_short, LongOrShortWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
-    http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
-    ],
-    secret_key_base: secret_key_base
+    url: [host: env!("PHX_HOST", :string?) || "example.com", port: 443, scheme: "https"],
+    http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}],
+    secret_key_base: env!("SECRET_KEY_BASE", :string!)
 
   config :long_or_short,
-    token_signing_secret:
-      System.get_env("TOKEN_SIGNING_SECRET") ||
-        raise("Missing environment variable `TOKEN_SIGNING_SECRET`!")
+    token_signing_secret: env!("TOKEN_SIGNING_SECRET", :string!),
+    dns_cluster_query: env!("DNS_CLUSTER_QUERY", :string?)
 
   # ## SSL Support
   #
