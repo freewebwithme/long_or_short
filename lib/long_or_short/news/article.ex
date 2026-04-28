@@ -228,6 +228,20 @@ defmodule LongOrShort.News.Article do
       prepare build(sort: [published_at: :desc])
       prepare build(limit: arg(:limit))
     end
+
+    read :get_content_hash do
+      argument :source, :atom, allow_nil?: false
+      argument :external_id, :string, allow_nil?: false
+        argument :symbol, :string, allow_nil?: false
+
+      filter expr(
+        source == ^arg(:source) and
+        external_id == ^arg(:external_id) and
+        ticker.symbol == ^arg(:symbol)
+      )
+
+      prepare build(select: [:content_hash], load: [:ticker])
+    end
   end
 
   # ─────────────────────────────────────────────────────────────────────
