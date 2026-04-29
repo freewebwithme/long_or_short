@@ -49,3 +49,6 @@ config :long_or_short,
 
 # Tests start news sources explicitly via start_supervised! when needed.
 config :long_or_short, enabled_news_sources: []
+
+# Tests use a mock provider — never hit the real Anthropic API
+config :long_or_short, :ai_provider, LongOrShort.AI.MockProvider

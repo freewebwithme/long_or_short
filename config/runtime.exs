@@ -10,8 +10,9 @@ source!([
 ])
 
 # Example for external service keys
-config :long_or_short, :finnhub_api_key, env!("FINNHUB_API_KEY", :string?)
-config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string?)
+config :long_or_short, :finnhub_api_key, env!("FINNHUB_API_KEY", :string, nil)
+config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string, nil)
+config :long_or_short, :sec_user_agent, env!("SEC_USER_AGENT", :string, nil)
 
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
@@ -35,8 +36,6 @@ end
 
 config :long_or_short, LongOrShortWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
-
-config :long_or_short, :sec_user_agent, env!("SEC_USER_AGENT", :string?)
 
 if config_env() == :prod do
   config :long_or_short, LongOrShort.Repo,
