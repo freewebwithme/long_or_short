@@ -119,6 +119,9 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# AI provider — defaults to Claude in dev/prod, overridden in test
+config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
