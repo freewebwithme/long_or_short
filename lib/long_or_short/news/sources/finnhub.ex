@@ -57,8 +57,13 @@ defmodule LongOrShort.News.Sources.Finnhub do
     api_key = Application.get_env(:long_or_short, :finnhub_api_key)
     symbols = Application.get_env(:long_or_short, :finnhub_watch_symbols, @default_symbols)
 
+    from =
+      case LongOrShort.Sources.get_source_state(:finnhub, authorize?: false) do
+        {:ok, %{last_success_at: %DateTime{} = dt}} -> DateTime.to_date(dt)
+        _ -> Date.add(Date.utc_today(), -3)
+      end
+
     to = Date.utc_today()
-    from = Date.add(to, -3)
 
     results =
       Enum.flat_map(symbols, fn symbol ->
@@ -110,6 +115,9 @@ defmodule LongOrShort.News.Sources.Finnhub do
       _ -> {:error, :missing_required_fields}
     end
   end
+
+  @impl LongOrShort.News.Source
+  def source_name, do: :finnhub
 
   # ── Helpers ────────────────────────────────────────────────────
 

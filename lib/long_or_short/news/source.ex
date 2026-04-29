@@ -52,6 +52,8 @@ defmodule LongOrShort.News.Source do
               {:ok, [raw_item :: map()], new_state :: map()}
               | {:error, reason :: term(), new_state :: map()}
 
+  @callback source_name() :: atom()
+
   @callback parse_response(raw_item :: map()) ::
               {:ok, [article_attrs :: map()]}
               | {:error, reason :: term()}

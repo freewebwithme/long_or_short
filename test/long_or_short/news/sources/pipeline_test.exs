@@ -43,6 +43,9 @@ defmodule LongOrShort.News.Sources.PipelineTest do
     def poll_interval_ms do
       Application.get_env(:long_or_short, :test_mock_poll_interval, 50)
     end
+
+    @impl true
+    def source_name, do: :mock_source
   end
 
   setup do
