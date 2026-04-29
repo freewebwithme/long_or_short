@@ -36,6 +36,8 @@ end
 config :long_or_short, LongOrShortWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+config :long_or_short, :sec_user_agent, env!("SEC_USER_AGENT", :string?)
+
 if config_env() == :prod do
   config :long_or_short, LongOrShort.Repo,
     # ssl: true,
