@@ -57,6 +57,9 @@ defmodule LongOrShort.News.Sources.Dummy do
     {:ok, [attrs]}
   end
 
+  @impl LongOrShort.News.Source
+  def source_name, do: :dummy
+
   # ── Sample data ────────────────────────────────────────────────
 
   defp samples do

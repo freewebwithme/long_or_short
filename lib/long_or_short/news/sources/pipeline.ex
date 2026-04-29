@@ -52,6 +52,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
   alias LongOrShort.News
   alias LongOrShort.News.Dedup
   alias LongOrShort.News.Sources.Backoff
+  alias LongOrShort.Sources
 
   @poll_message :poll
 
@@ -98,6 +99,9 @@ defmodule LongOrShort.News.Sources.Pipeline do
         "#{ingested} ingested, #{deduped} deduped, #{errored} errored " <>
         "(#{length(raw_items)} raw)"
     end)
+
+    # Persist last_success_at so next restart fetches only new articles
+    update_source_state(module, :success)
 
     next_state = Map.put(state, :retry_count, 0)
     schedule_next(module.poll_interval_ms())
@@ -161,6 +165,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
         if existing_hash != article.content_hash do
           broadcast_new_article(article)
         end
+
         {:ok, article}
 
       {:error, reason} = err ->
@@ -177,6 +182,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
   defp fetch_existing_hash(%{source: source, external_id: external_id, symbol: symbol}) do
     case News.get_article_content_hash(source, external_id, symbol, actor: SystemActor.new()) do
       {:ok, [%{content_hash: hash} | _]} -> hash
+      {:ok, []} -> nil
       {:error, _} -> nil
     end
   end
@@ -190,6 +196,9 @@ defmodule LongOrShort.News.Sources.Pipeline do
         "(retry=#{retry_count}, next in #{next_interval}ms)"
     )
 
+    # Persist last_error for observability
+    update_source_state(module, {:error, reason})
+
     next_state = Map.put(state, :retry_count, retry_count)
     schedule_next(next_interval)
     {:noreply, next_state}
@@ -201,4 +210,25 @@ defmodule LongOrShort.News.Sources.Pipeline do
 
   defp schedule_immediately, do: Process.send_after(self(), @poll_message, 0)
   defp schedule_next(interval_ms), do: Process.send_after(self(), @poll_message, interval_ms)
+
+  defp update_source_state(module, :success) do
+    Sources.upsert_source_state(
+      %{
+        source: module.source_name(),
+        last_success_at: DateTime.utc_now(),
+        last_error: nil
+      },
+      actor: SystemActor.new()
+    )
+  end
+
+  defp update_source_state(module, {:error, reason}) do
+    Sources.upsert_source_state(
+      %{
+        source: module.source_name(),
+        last_error: inspect(reason)
+      },
+      actor: SystemActor.new()
+    )
+  end
 end
