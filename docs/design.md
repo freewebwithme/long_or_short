@@ -106,3 +106,29 @@ This document captures the *why* behind significant choices. New decisions shoul
 **Decision**: Banned `Process.sleep` from test code. TTL-related tests inject expired timestamps directly into ETS. PubSub-related tests use `assert_receive` with explicit timeouts.
 
 **Rationale**: Sleep makes tests slow *and* flaky under load (CI is the worst case). The deterministic alternatives are not harder to write — they're often clearer about what the test actually depends on.
+
+---
+
+## 2026-04 — Source order before AI: SEC EDGAR before LON-22
+
+**Decision**: Implement LON-45 (SEC EDGAR RSS) before starting the LON-22 AI analysis epic, despite the original sprint plan pointing the other way.
+
+**Rationale**: Finnhub `company-news` returns short summaries (1–2 sentences) — enough for repetition detection and basic categorization, but thin for deeper analysis (deal size, dilution, risk factors). SEC 8-K filings are first-party disclosures with substantive content. Layering AI on top of richer source text produces meaningfully better verdicts than running it on Finnhub summaries alone.
+
+**Trade-off**: AI layer ships one ticket later. Acceptable — the analysis is the product's core value, and shipping it on weak data would create a misleading first impression.
+
+**What we explicitly rejected**: Full-text scraping of the URLs Finnhub returns (Reuters, Benzinga, etc.). Per-site scrapers, paywall handling, and the legal grey area aren't worth the maintenance load. SEC + Finnhub summary covers most of the gap.
+
+---
+
+## 2026-04 — Anthropic API: `Req` directly, no SDK
+
+**Decision**: Call the Anthropic API via `Req` from inside our own `LongOrShort.AI.Provider` behaviour. Do not depend on `anthropix` or any other community SDK.
+
+**Rationale**:
+- The Anthropic API surface we use is small (`POST /v1/messages` plus a few headers). The wrapping value of an SDK is low.
+- Advanced features on the LON-35 cost-optimization roadmap — prompt caching, Haiku/Sonnet cascade, Batch API — need precise control over headers, request shape, and response parsing. SDKs tend to lag behind these.
+- `anthropix` last shipped in mid-2025 with a small maintainer footprint. Pinning core analysis to a stagnant dependency is a risk we don't need to take.
+- We already plan a `LongOrShort.AI.Provider` behaviour (LON-23). That's our abstraction; an SDK underneath would just be a wrapper-of-a-wrapper.
+
+**Implication**: Each new Anthropic feature we adopt (caching, batching, etc.) is a deliberate code change in our provider, not a dependency upgrade.
