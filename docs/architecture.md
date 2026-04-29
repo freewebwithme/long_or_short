@@ -5,8 +5,8 @@
 ```
 External APIs                Ingestion Pipeline                       Subscribers
 ─────────────                ─────────────────                        ───────────
-Finnhub (free tier)          News.Sources.Finnhub  ──┐
-SEC EDGAR RSS (planned)  ──→ News.Sources.SecEdgar ──┤
+Finnhub (company-news)       News.Sources.Finnhub  ──┐
+SEC EDGAR RSS (LON-45)   ──→ News.Sources.SecEdgar ──┤
 Future sources               News.Sources.* ─────────┤
                                                      │
                                                      ▼
@@ -27,9 +27,15 @@ Future sources               News.Sources.* ─────────┤
                                           │   Phoenix PubSub     │     ┌─────────────┐
                                           │  "news:articles"     │  ─→ │  FeedLive   │
                                           │  {:new_article, _}   │     │  /feed page │
-                                          └──────────────────────┘     └─────────────┘
-                                                                       (Analysis worker
-                                                                        planned, LON-22)
+                                          │                      │  ─→ │  Analysis   │
+                                          │                      │     │  worker     │
+                                          └──────────────────────┘     │  (LON-22)   │
+                                                                       └──────┬──────┘
+                                                                              │
+                                                                              ▼
+                                                                    LongOrShort.AI
+                                                                    (Provider behaviour
+                                                                     + Req → Anthropic)
 ```
 
 ## Application supervision tree
@@ -59,6 +65,7 @@ Each source is its own `GenServer` that implements the `News.Source` behaviour:
 - Knows how to talk to its API (`fetch_news/1`)
 - Knows how to map its API response to Article attrs (`parse_response/1`)
 - Declares its base polling interval (`poll_interval_ms/0`)
+- Declares its `source_name/0` atom for SourceState lookup (LON-55)
 
 Sources never crash on transient errors — they return `{:error, reason, new_state}` and Pipeline applies exponential backoff.
 
@@ -68,7 +75,9 @@ The boilerplate every source needs lives here:
 - Polling scheduling via `Process.send_after`
 - Pre-DB dedup via ETS (`News.Dedup`)
 - Calling `News.ingest_article/2` with `SystemActor`
-- PubSub broadcast on successful ingest
+- `content_hash` comparison to gate broadcasts (LON-54)
+- `SourceState` updates (`last_success_at`, `last_error`) on each cycle (LON-55)
+- PubSub broadcast on genuine new/changed articles
 - Exponential backoff on `fetch_news` errors
 
 Feeders are ~6 lines of GenServer boilerplate plus three callback implementations. See `lib/long_or_short/news/sources/dummy.ex` for the smallest reference implementation.
@@ -76,16 +85,17 @@ Feeders are ~6 lines of GenServer boilerplate plus three callback implementation
 ### Per-item resilience
 A bad parse on one raw item, or an ingest failure on one article, does **not** abort the batch. Each item is logged individually. Only `fetch_news/1` returning `{:error, ...}` triggers backoff — that's the signal of a source-wide problem.
 
-## Deduplication (two layers)
+## Deduplication and broadcast gating
 
-Articles are deduplicated at two levels:
+Two layers cooperate:
 
 | Layer | Storage | TTL | Scope | Purpose |
 |-------|---------|-----|-------|---------|
-| **`News.Dedup`** | ETS (`:news_seen`) | 24h | `(source, external_id, ticker)` SHA-256 | Cheap pre-DB skip — avoid round-trip on already-seen articles |
+| **`News.Dedup`** | ETS (`:news_seen`) | 24h | `(source, external_id, ticker)` SHA-256 | Cheap pre-DB skip — avoid round-trip on already-seen articles within a session |
 | **`Article` upsert** | Postgres unique index | Permanent | `(source, external_id, ticker_id)` | DB-level guarantee, queryable, auditable |
+| **`content_hash` compare** | Postgres unique index | Permanent | `(source, external_id, ticker_id)` | Decides whether to broadcast — only when content actually changed |
 
-Pre-DB ETS dedup is an optimization, not a correctness mechanism — the DB upsert is the source of truth.
+ETS Dedup is an in-session optimization; the DB upsert + `content_hash` is the source of truth for both correctness (no duplicate rows) and broadcast behavior (no duplicate fan-out).
 
 ## PubSub event contract
 
@@ -93,9 +103,19 @@ A single topic carries all news events. The contract is wrapped by `LongOrShort.
 
 | Topic | Payload | Publisher | Subscriber |
 |-------|---------|-----------|------------|
-| `news:articles` | `{:new_article, %Article{}}` | News.Sources.Pipeline | LiveView, Analysis (planned) |
+| `news:articles` | `{:new_article, %Article{}}` | `News.Sources.Pipeline` (only on new/changed content) | `FeedLive`, Analysis worker (LON-28) |
 
 Publishers call `Events.broadcast_new_article(article)`. Subscribers call `Events.subscribe()`.
+
+## AI analysis layer (LON-22)
+
+Planned. Subscribes to `news:articles`, decides whether to invoke an AI provider, persists results.
+
+- `LongOrShort.AI` — facade module
+- `LongOrShort.AI.Provider` — behaviour (LON-23). One implementation per LLM.
+- `LongOrShort.AI.Providers.Claude` — Anthropic via `Req` (LON-24). No SDK; we control headers, body, parsing directly.
+- `LongOrShort.Analysis.RepetitionAnalysis` — Ash resource for analysis output (LON-25)
+- `LongOrShort.Analysis.AnalysisWorker` — PubSub subscriber that triggers analysis (LON-28)
 
 ## Authorization model
 
