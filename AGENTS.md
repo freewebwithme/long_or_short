@@ -1,6 +1,6 @@
 # Long or Short — Agent Context
 
-Real-time news analysis tool for small-cap momentum traders. When a small-cap pumps on a news catalyst, traders have minutes to decide. This app collapses the manual research loop (repetition check, historical price reaction, strategy filter) into a single AI-generated card delivered to a live feed.
+Real-time news analysis tool for active traders, with small-cap momentum as the primary use case. When a stock pumps on a news catalyst, traders have minutes to decide. This app collapses the manual research loop (repetition check, historical price reaction, strategy filter) into a single AI-generated card delivered to a live feed.
 
 ## Stack
 

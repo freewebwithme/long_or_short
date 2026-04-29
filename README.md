@@ -2,7 +2,7 @@
 
 A real-time news analysis tool for small-cap momentum traders.
 
-When a small-cap stock pumps on a news catalyst, traders have minutes — sometimes seconds — to decide whether to enter, hold, or skip. The hard part isn't reading the headline; it's the context: *Is this the fourth partnership announcement this quarter? Has this ticker historically spiked and faded after similar news? Does it even fit my strategy filters?*
+When a stock pumps on a news catalyst, traders have minutes — sometimes seconds — to decide whether to enter, hold, or skip. The hard part isn't reading the headline; it's the context: *Is this the fourth partnership announcement this quarter? Has this ticker historically spiked and faded after similar news? Does it even fit my strategy filters?*
 
 Long or Short collapses that 5-10 minute manual research loop into a single AI-generated card, delivered to a live feed the moment the news breaks.
 
@@ -98,6 +98,6 @@ All access goes through `LongOrShort.News.Events` — no string topic literals s
 
 ## Why I'm building this
 
-I trade small-cap momentum on the side. Every morning I run through the same routine — gap scanner, news scan, then ten minutes of context gathering on each ticker. Most of that context-gathering is mechanical: "have I seen this story before?", "did this ticker pump and dump last time?", "does it even fit my filters?"
+I trade small-cap momentum on the side, and that's the use case driving the MVP. Every morning I run through the same routine — gap scanner, news scan, then ten minutes of context gathering on each ticker. Most of that context-gathering is mechanical: "have I seen this story before?", "did this ticker pump and dump last time?", "does it even fit my filters?"
 
 It's exactly the kind of work an LLM should be doing for me. So I'm building it.
