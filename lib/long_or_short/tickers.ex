@@ -26,6 +26,7 @@ defmodule LongOrShort.Tickers do
       define :update_ticker_price, action: :update_price, args: [:last_price]
       define :upsert_ticker_by_symbol, action: :upsert_by_symbol
       define :get_ticker_by_symbol, action: :by_symbol, args: [:symbol]
+      define :get_ticker_by_cik, action: :read, get_by: [:cik]
       define :list_active_tickers, action: :active
       define :list_tickers, action: :read
       define :destroy_ticker, action: :destroy

@@ -26,10 +26,13 @@ defmodule LongOrShort.Tickers.Ticker do
   postgres do
     table "tickers"
     repo LongOrShort.Repo
+
+    identity_wheres_to_sql unique_cik: "cik IS NOT NULL"
   end
 
   identities do
     identity :unique_symbol, [:symbol]
+    identity :unique_cik, [:cik], where: expr(not is_nil(cik))
   end
 
   attributes do
@@ -42,6 +45,12 @@ defmodule LongOrShort.Tickers.Ticker do
       allow_nil? false
       public? true
       description "Trading symbol (e.g. NVDA, AAPL). Normalized to uppercase"
+    end
+
+    attribute :cik, :string do
+      description "SEC EDGAR Central Index Key (zero-padded 10-digit string)"
+      allow_nil? true
+      public? true
     end
 
     attribute :company_name, :string, public?: true
@@ -142,7 +151,23 @@ defmodule LongOrShort.Tickers.Ticker do
         :float_shares,
         :shares_outstanding,
         :avg_volume_30d,
-        :is_active
+        :is_active,
+        :cik
+      ]
+
+      upsert_fields [
+        :company_name,
+        :exchange,
+        :sector,
+        :industry,
+        :float_shares,
+        :shares_outstanding,
+        :avg_volume_30d,
+        :cik
+        # 의도적으로 제외:
+        # :symbol — identity. will be never changed
+        # :is_active — default true,
+        # :last_price, :last_price_updated_at — only update in update_price action
       ]
 
       change {LongOrShort.Tickers.Changes.UpcaseSymbol, []}
