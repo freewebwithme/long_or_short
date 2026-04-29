@@ -4,7 +4,6 @@ defmodule LongOrShort.Analysis.RepetitionAnalysisTest do
   import LongOrShort.{AnalysisFixtures, NewsFixtures, AccountsFixtures}
 
   alias LongOrShort.Analysis
-  alias LongOrShort.Analysis.RepetitionAnalysis
 
   describe "start_repetition_analysis/2" do
     test "creates a :pending row for the given article" do
