@@ -229,6 +229,28 @@ defmodule LongOrShort.News.Article do
       prepare build(limit: arg(:limit))
     end
 
+    read :recent_for_ticker do
+      description """
+      Articles for a ticker published since `:since`, newest first.
+      Optionally excludes a single article id (used by the analyzer to
+      skip the article being analyzed).
+      """
+
+      argument :ticker_id, :uuid, allow_nil?: false
+      argument :since, :utc_datetime_usec, allow_nil?: false
+      argument :limit, :integer, default: 20
+      argument :exclude_id, :uuid
+
+      filter expr(
+               ticker_id == ^arg(:ticker_id) and
+                 published_at >= ^arg(:since) and
+                 (is_nil(^arg(:exclude_id)) or id != ^arg(:exclude_id))
+             )
+
+      prepare build(sort: [published_at: :desc])
+      prepare build(limit: arg(:limit))
+    end
+
     read :get_content_hash do
       argument :source, :atom, allow_nil?: false
       argument :external_id, :string, allow_nil?: false

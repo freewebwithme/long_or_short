@@ -22,6 +22,10 @@ defmodule LongOrShort.News do
       define :get_article_content_hash,
         action: :get_content_hash,
         args: [:source, :external_id, :symbol]
+
+      define :list_recent_articles_for_ticker,
+        action: :recent_for_ticker,
+        args: [:ticker_id, :since]
     end
   end
 end

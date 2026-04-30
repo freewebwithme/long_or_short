@@ -32,7 +32,7 @@ defmodule LongOrShort.Application do
       {:ok, _pid} = ok ->
         # Sync SEC CIK ↔ ticker mapping in the background. Fire-and-forget:
         # if it fails, log and let SEC source skip unmapped CIKs gracefully.
-        Task.start(fn -> LongOrShort.Sec.CikMapper.sync() end)
+        maybe_sync_cik_mapping()
         ok
 
       other ->
@@ -46,5 +46,11 @@ defmodule LongOrShort.Application do
   def config_change(changed, _new, removed) do
     LongOrShortWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp maybe_sync_cik_mapping do
+    if Application.get_env(:long_or_short, :sync_cik_on_boot, true) do
+      Task.start(fn -> LongOrShort.Sec.CikMapper.sync() end)
+    end
   end
 end
