@@ -78,7 +78,7 @@ mix setup
 mix phx.server
 ```
 
-Visit `http://localhost:4000/feed` (sign-in required — Ash Authentication is wired up via magic link).
+Visit `http://localhost:4000/feed` (sign-in required — Ash Authentication is wired up with email + password).
 
 For real news sources, set:
 
