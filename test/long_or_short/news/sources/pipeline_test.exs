@@ -14,6 +14,7 @@ defmodule LongOrShort.News.Sources.PipelineTest do
   """
 
   use LongOrShort.DataCase, async: false
+  @moduletag :capture_log
 
   alias LongOrShort.News
   alias LongOrShort.News.Dedup
