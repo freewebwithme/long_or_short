@@ -128,6 +128,12 @@ config :phoenix, :json_library, Jason
 # AI provider — defaults to Claude in dev/prod, overridden in test
 config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude
 
+config :long_or_short, LongOrShort.AI.Providers.Claude,
+  model: "claude-sonnet-4-6",
+  max_tokens: 4096,
+  base_url: "https://api.anthropic.com",
+  anthropic_version: "2023-06-01"
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

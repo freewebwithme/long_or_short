@@ -52,3 +52,7 @@ config :long_or_short, enabled_news_sources: []
 
 # Tests use a mock provider — never hit the real Anthropic API
 config :long_or_short, :ai_provider, LongOrShort.AI.MockProvider
+
+# Route Claude provider HTTP traffic through Req.Test in tests.
+config :long_or_short, LongOrShort.AI.Providers.Claude,
+  req_plug: {Req.Test, LongOrShort.AI.Providers.Claude}
