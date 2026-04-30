@@ -80,7 +80,12 @@ defmodule LongOrShortWeb.FeedLive do
              :repetition_analysis_complete,
              :repetition_analysis_failed
            ] do
-    {:noreply, update(socket, :analyses, &Map.put(&1, id, analysis))}
+    socket = update(socket, :analyses, &Map.put(&1, id, analysis))
+
+    case News.get_article(id, load: [:ticker], actor: socket.assigns.current_user) do
+      {:ok, article} -> {:noreply, stream_insert(socket, :articles, article)}
+      {:error, _} -> {:noreply, socket}
+    end
   end
 
   @impl true
