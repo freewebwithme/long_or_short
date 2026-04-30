@@ -1,45 +1,66 @@
 defmodule LongOrShortWeb.FeedLive do
   @moduledoc """
-  Real-time news feed page. Subscribes to the News.Events PubSub topic
-  and prepends each newly-broadcast Article to the visible stream.
+  Real-time news feed page. Subscribes to:
 
-  Rendered as a LiveView stream so we don't
-  hold an unbounded list in socket assigns. A separate `:article_count`
-  assign tracks the total — streams themselves are not enumerable.
+  * `News.Events` — to prepend newly-ingested articles to the stream
+  * `Analysis.Events` — to flip cards to "analyzing…" / render result
+    badges as analyses move through pending → complete | failed
 
-  Authentication: requires a logged-in user (`live_user_required` is
-  applied via the `ash_authentication_live_session` block in the
-  router).
+  Articles render as a LiveView stream so the feed doesn't hold an
+  unbounded list in socket assigns. Latest analysis per article is
+  kept in a separate `:analyses` map keyed by `article_id` for cheap
+  card lookup; that map is bounded in practice by the visible stream.
   """
-
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.News
+  alias LongOrShort.{Analysis, News}
+  alias LongOrShort.Analysis.{Events, RepetitionAnalyzer}
 
   @initial_limit 30
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: News.Events.subscribe()
+    if connected?(socket) do
+      News.Events.subscribe()
+      Events.subscribe()
+    end
+
+    actor = socket.assigns.current_user
 
     {:ok, articles} =
       News.list_recent_articles(
         %{limit: @initial_limit},
         load: [:ticker],
-        actor: socket.assigns.current_user
+        actor: actor
       )
+
+    analyses = load_latest_analyses(articles, actor)
 
     socket =
       socket
       |> assign(:article_count, length(articles))
+      |> assign(:analyses, analyses)
       |> stream(:articles, articles)
 
     {:ok, socket}
   end
 
   @impl true
+  def handle_event("analyze", %{"id" => article_id}, socket) do
+    Task.Supervisor.start_child(
+      LongOrShort.Analysis.TaskSupervisor,
+      fn -> RepetitionAnalyzer.analyze(article_id) end
+    )
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:new_article, article}, socket) do
-    case News.get_article(article.id, load: [:ticker], actor: socket.assigns.current_user) do
+    case News.get_article(article.id,
+           load: [:ticker],
+           actor: socket.assigns.current_user
+         ) do
       {:ok, article} ->
         socket =
           socket
@@ -51,6 +72,15 @@ defmodule LongOrShortWeb.FeedLive do
       {:error, _} ->
         {:noreply, socket}
     end
+  end
+
+  def handle_info({event, %{article_id: id} = analysis}, socket)
+      when event in [
+             :repetition_analysis_started,
+             :repetition_analysis_complete,
+             :repetition_analysis_failed
+           ] do
+    {:noreply, update(socket, :analyses, &Map.put(&1, id, analysis))}
   end
 
   @impl true
@@ -85,12 +115,83 @@ defmodule LongOrShortWeb.FeedLive do
             <div class="text-xs px-2 py-0.5 rounded bg-base-300 flex-shrink-0">
               {article.source}
             </div>
+
+            <.analysis_cell analysis={Map.get(@analyses, article.id)} article_id={article.id} />
           </div>
         </div>
       </div>
     </Layouts.app>
     """
   end
+
+  # ── analysis cell rendering ────────────────────────────────────────
+
+  attr :analysis, :any, required: true
+  attr :article_id, :string, required: true
+
+  defp analysis_cell(%{analysis: nil} = assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="analyze"
+      phx-value-id={@article_id}
+      class="text-xs px-2 py-0.5 rounded bg-primary text-primary-content flex-shrink-0 hover:bg-primary-focus"
+    >
+      Analyze
+    </button>
+    """
+  end
+
+  defp analysis_cell(%{analysis: %{status: :pending}} = assigns) do
+    ~H"""
+    <div class="text-xs italic opacity-60 flex-shrink-0">analyzing…</div>
+    """
+  end
+
+  defp analysis_cell(%{analysis: %{status: :complete} = a} = assigns) do
+    assigns = assign(assigns, :a, a)
+
+    ~H"""
+    <div class="flex gap-1 items-center text-xs flex-shrink-0">
+      <span
+        class={"w-2 h-2 rounded-full #{fatigue_color(@a.fatigue_level)}"}
+        title={"fatigue: #{@a.fatigue_level}"}
+      />
+      <span :if={@a.is_repetition} class="opacity-80">🔁 {@a.repetition_count}×</span>
+      <span :if={@a.theme} class="px-1.5 py-0.5 rounded bg-base-300 opacity-80 max-w-[10rem] truncate">
+        {@a.theme}
+      </span>
+    </div>
+    """
+  end
+
+  defp analysis_cell(%{analysis: %{status: :failed} = a} = assigns) do
+    assigns = assign(assigns, :a, a)
+
+    ~H"""
+    <div class="text-xs flex-shrink-0" title={@a.error_message || "analysis failed"}>
+      <span class="text-error">⚠</span>
+    </div>
+    """
+  end
+
+  # ── helpers ────────────────────────────────────────────────────────
+
+  defp load_latest_analyses(articles, actor) do
+    articles
+    |> Enum.map(& &1.id)
+    |> Enum.reduce(%{}, fn article_id, acc ->
+      case Analysis.get_latest_repetition_analysis(article_id, actor: actor) do
+        {:ok, %{} = analysis} -> Map.put(acc, article_id, analysis)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp fatigue_color(:low), do: "bg-success"
+  defp fatigue_color(:medium), do: "bg-warning"
+  defp fatigue_color(:high), do: "bg-error"
+  defp fatigue_color(_), do: "bg-base-300"
 
   defp relative_time(%DateTime{} = dt) do
     diff = DateTime.diff(DateTime.utc_now(), dt, :second)

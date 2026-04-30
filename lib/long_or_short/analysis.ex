@@ -25,6 +25,12 @@ defmodule LongOrShort.Analysis do
       define :list_repetition_analyses_for_article,
         action: :for_article,
         args: [:article_id]
+
+      define :get_pending_repetition_analysis,
+        action: :pending_for_article,
+        args: [:article_id],
+        get?: true,
+        not_found_error?: false
     end
   end
 end

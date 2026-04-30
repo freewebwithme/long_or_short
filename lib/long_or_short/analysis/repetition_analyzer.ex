@@ -92,14 +92,26 @@ defmodule LongOrShort.Analysis.RepetitionAnalyzer do
   @lookback_days 30
   @max_past_articles 20
 
-  @spec analyze(Ecto.UUID.t()) :: {:ok, Analysis.RepetitionAnalysis.t()} | {:error, term()}
+  @spec analyze(Ecto.UUID.t()) ::
+          {:ok, Analysis.RepetitionAnalysis.t()} | {:error, term()}
   def analyze(article_id) do
     actor = SystemActor.new()
 
     with {:ok, article} <- News.get_article(article_id, load: [:ticker], actor: actor),
-         {:ok, analysis} <- Analysis.start_repetition_analysis(article_id, actor: actor),
-         {:ok, past} <- load_past_articles(article, actor) do
+         :ok <- guard_against_in_flight(article_id, actor),
+         {:ok, past} <- load_past_articles(article, actor),
+         {:ok, analysis} <-
+           Analysis.start_repetition_analysis(article_id, actor: actor) do
+      Events.broadcast_repetition_analysis_started(analysis)
       run_analysis(article, past, analysis, actor)
+    end
+  end
+
+  defp guard_against_in_flight(article_id, actor) do
+    case Analysis.get_pending_repetition_analysis(article_id, actor: actor) do
+      {:ok, nil} -> :ok
+      {:ok, %{}} -> {:error, :already_in_progress}
+      {:error, _} = err -> err
     end
   end
 
@@ -171,7 +183,14 @@ defmodule LongOrShort.Analysis.RepetitionAnalyzer do
   end
 
   defp fail(analysis, message, actor) do
-    Analysis.fail_repetition_analysis(analysis, %{error_message: message}, actor: actor)
+    case Analysis.fail_repetition_analysis(analysis, %{error_message: message}, actor: actor) do
+      {:ok, failed} ->
+        Events.broadcast_repetition_analysis_failed(failed)
+        {:ok, failed}
+
+      err ->
+        err
+    end
   end
 
   defp validate(input) when is_map(input) do

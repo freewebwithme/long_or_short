@@ -19,6 +19,7 @@ defmodule LongOrShort.Application do
       {Phoenix.PubSub, name: LongOrShort.PubSub},
       LongOrShort.News.Dedup,
       LongOrShort.News.SourceSupervisor,
+      {Task.Supervisor, name: LongOrShort.Analysis.TaskSupervisor},
       # Start to serve requests, typically the last entry
       LongOrShortWeb.Endpoint,
       {AshAuthentication.Supervisor, [otp_app: :long_or_short]}

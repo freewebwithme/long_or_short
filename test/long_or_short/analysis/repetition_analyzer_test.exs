@@ -51,6 +51,10 @@ defmodule LongOrShort.Analysis.RepetitionAnalyzerTest do
       assert analysis.tokens_used_input == 10
       assert analysis.tokens_used_output == 5
 
+      # Started broadcast goes out before AI call; complete after.
+      assert_receive {:repetition_analysis_started, %{status: :pending, article_id: id}}
+                     when id == article.id
+
       assert_receive {:repetition_analysis_complete, ^analysis}
     end
 
@@ -224,13 +228,16 @@ defmodule LongOrShort.Analysis.RepetitionAnalyzerTest do
       assert analysis.error_message =~ "http_error"
     end
 
-    test "no broadcast on failure" do
+    test "broadcasts a :failed event on failure" do
       Events.subscribe()
       article = build_article()
 
       MockProvider.stub(fn _, _, _ -> {:error, {:network_error, :timeout}} end)
 
-      assert {:ok, _} = RepetitionAnalyzer.analyze(article.id)
+      assert {:ok, %{status: :failed} = analysis} =
+               RepetitionAnalyzer.analyze(article.id)
+
+      assert_receive {:repetition_analysis_failed, ^analysis}
       refute_receive {:repetition_analysis_complete, _}, 50
     end
   end
@@ -245,6 +252,35 @@ defmodule LongOrShort.Analysis.RepetitionAnalyzerTest do
         Analysis.list_repetition_analyses_for_article(missing_id, authorize?: false)
 
       assert all == []
+    end
+  end
+
+  describe "analyze/1 — race guard" do
+    test "returns {:error, :already_in_progress} when a :pending analysis exists" do
+      article = build_article()
+
+      {:ok, _pending} =
+        Analysis.start_repetition_analysis(article.id, authorize?: false)
+
+      assert {:error, :already_in_progress} =
+               RepetitionAnalyzer.analyze(article.id)
+
+      # Only the original :pending row should exist; no duplicate created.
+      {:ok, all} =
+        Analysis.list_repetition_analyses_for_article(article.id, authorize?: false)
+
+      assert length(all) == 1
+    end
+
+    test "lets a new analysis through after the previous one completes" do
+      article = build_article()
+
+      MockProvider.stub(fn _, _, _ -> tool_response(valid_input()) end)
+
+      assert {:ok, %{status: :complete}} = RepetitionAnalyzer.analyze(article.id)
+
+      # Second call should succeed because no :pending exists.
+      assert {:ok, %{status: :complete}} = RepetitionAnalyzer.analyze(article.id)
     end
   end
 end
