@@ -193,6 +193,23 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ "partnership"
     end
 
+    test "shows 'analyzing…' while analysis is pending", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "PEND"})
+      article = build_article_for_ticker(ticker, %{title: "Pending news"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      {:ok, pending} =
+        Analysis.start_repetition_analysis(article.id, authorize?: false)
+
+      AnalysisEvents.broadcast_repetition_analysis_started(pending)
+
+      html = render(view)
+
+      assert html =~ "analyzing"
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
     test "renders existing :complete analysis on initial mount", %{conn: conn} do
       ticker = build_ticker(%{symbol: "NVDA"})
       article = build_article_for_ticker(ticker, %{title: "NVDA news"})
