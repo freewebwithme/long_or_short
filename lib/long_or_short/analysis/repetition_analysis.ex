@@ -174,6 +174,21 @@ defmodule LongOrShort.Analysis.RepetitionAnalysis do
 
       prepare build(sort: [created_at: :desc])
     end
+
+    read :pending_for_article do
+      description """
+      Returns the in-flight :pending analysis for the given article (if any).
+
+      Used by `RepetitionAnalyzer.analyze/1` as a soft race guard against
+      concurrent triggers on the same article. A stronger guarantee would
+      require a partial unique index `WHERE status = :pending`; MVP relies
+      on this check.
+      """
+
+      argument :article_id, :uuid, allow_nil?: false
+      filter expr(article_id == ^arg(:article_id) and status == :pending)
+      prepare build(sort: [created_at: :desc], limit: 1)
+    end
   end
 
   policies do
