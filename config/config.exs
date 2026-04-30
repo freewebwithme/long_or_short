@@ -15,7 +15,13 @@ config :long_or_short, Oban,
   notifier: Oban.Notifiers.Postgres,
   queues: [default: 10],
   repo: LongOrShort.Repo,
-  plugins: [{Oban.Plugins.Cron, []}]
+  plugins: [
+    {Oban.Plugins.Cron,
+     crontab: [
+       # Daily at 05:00 UTC (~1am EST) — well after US market close.
+       {"0 5 * * *", LongOrShort.Tickers.Workers.FinnhubProfileSync}
+     ]}
+  ]
 
 config :ash,
   allow_forbidden_field_for_relationships_by_default?: true,
