@@ -62,3 +62,5 @@ config :long_or_short, LongOrShort.AI.Providers.Claude,
 config :long_or_short, :sync_cik_on_boot, false
 
 config :long_or_short, :watchlist_override, ~w(AAPL TSLA)
+
+config :long_or_short, :enable_price_stream, false

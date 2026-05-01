@@ -259,4 +259,68 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert render(view) =~ "⚠"
     end
   end
+
+  describe "live price label" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders initial price as data-initial-price for a ticker with last_price",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "AAPL", last_price: Decimal.new("215.42")})
+      build_article_for_ticker(ticker, %{title: "Apple news"})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ ~s|data-symbol="AAPL"|
+      assert html =~ ~s|data-initial-price="215.42"|
+    end
+
+    test "leaves data-initial-price empty when last_price is nil", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "NOPRICE"})
+      build_article_for_ticker(ticker, %{title: "No-price news"})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ ~s|data-symbol="NOPRICE"|
+      assert html =~ ~s|data-initial-price=""|
+    end
+
+    test "pushes price_tick event to the client on PubSub broadcast", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "TSLA", last_price: Decimal.new("100.00")})
+      build_article_for_ticker(ticker, %{title: "Tesla news"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      Phoenix.PubSub.broadcast(
+        LongOrShort.PubSub,
+        "prices",
+        {:price_tick, "TSLA", Decimal.new("250.42")}
+      )
+
+      assert_push_event view, "price_tick", %{symbol: "TSLA", price: "250.42"}
+    end
+
+    test "successive ticks each emit a push_event", %{conn: conn} do
+      build_ticker(%{symbol: "AAPL"})
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      Phoenix.PubSub.broadcast(
+        LongOrShort.PubSub,
+        "prices",
+        {:price_tick, "AAPL", Decimal.new("100.00")}
+      )
+
+      Phoenix.PubSub.broadcast(
+        LongOrShort.PubSub,
+        "prices",
+        {:price_tick, "AAPL", Decimal.new("101.50")}
+      )
+
+      assert_push_event view, "price_tick", %{symbol: "AAPL", price: "100.00"}
+      assert_push_event view, "price_tick", %{symbol: "AAPL", price: "101.50"}
+    end
+  end
 end

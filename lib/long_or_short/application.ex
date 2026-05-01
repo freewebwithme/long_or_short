@@ -7,23 +7,24 @@ defmodule LongOrShort.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      LongOrShortWeb.Telemetry,
-      LongOrShort.Repo,
-      {DNSCluster, query: Application.get_env(:long_or_short, :dns_cluster_query) || :ignore},
-      {Oban,
-       AshOban.config(
-         Application.fetch_env!(:long_or_short, :ash_domains),
-         Application.fetch_env!(:long_or_short, Oban)
-       )},
-      {Phoenix.PubSub, name: LongOrShort.PubSub},
-      LongOrShort.News.Dedup,
-      LongOrShort.News.SourceSupervisor,
-      {Task.Supervisor, name: LongOrShort.Analysis.TaskSupervisor},
-      # Start to serve requests, typically the last entry
-      LongOrShortWeb.Endpoint,
-      {AshAuthentication.Supervisor, [otp_app: :long_or_short]}
-    ]
+    children =
+      [
+        LongOrShortWeb.Telemetry,
+        LongOrShort.Repo,
+        {DNSCluster, query: Application.get_env(:long_or_short, :dns_cluster_query) || :ignore},
+        {Oban,
+         AshOban.config(
+           Application.fetch_env!(:long_or_short, :ash_domains),
+           Application.fetch_env!(:long_or_short, Oban)
+         )},
+        {Phoenix.PubSub, name: LongOrShort.PubSub},
+        LongOrShort.News.Dedup,
+        LongOrShort.News.SourceSupervisor,
+        {Task.Supervisor, name: LongOrShort.Analysis.TaskSupervisor},
+        # Start to serve requests, typically the last entry
+        LongOrShortWeb.Endpoint,
+        {AshAuthentication.Supervisor, [otp_app: :long_or_short]}
+      ] ++ maybe_price_stream()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -52,6 +53,14 @@ defmodule LongOrShort.Application do
   defp maybe_sync_cik_mapping do
     if Application.get_env(:long_or_short, :sync_cik_on_boot, true) do
       Task.start(fn -> LongOrShort.Sec.CikMapper.sync() end)
+    end
+  end
+
+  defp maybe_price_stream do
+    if Application.get_env(:long_or_short, :enable_price_stream, true) do
+      [LongOrShort.Tickers.Sources.FinnhubStream]
+    else
+      []
     end
   end
 end

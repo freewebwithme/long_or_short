@@ -23,6 +23,7 @@ defmodule LongOrShortWeb.FeedLive do
     if connected?(socket) do
       News.Events.subscribe()
       Events.subscribe()
+      Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
     end
 
     actor = socket.assigns.current_user
@@ -53,6 +54,10 @@ defmodule LongOrShortWeb.FeedLive do
     )
 
     {:noreply, socket}
+  end
+
+  def handle_info({:price_tick, symbol, price}, socket) do
+    {:noreply, push_event(socket, "price_tick", %{symbol: symbol, price: format_price(price)})}
   end
 
   @impl true
@@ -103,7 +108,6 @@ defmodule LongOrShortWeb.FeedLive do
         <div :if={@article_count == 0} class="opacity-60 italic py-8 text-center">
           No articles yet — waiting for news...
         </div>
-
         <div id="articles" phx-update="stream" class="space-y-2">
           <div
             :for={{dom_id, article} <- @streams.articles}
@@ -115,7 +119,19 @@ defmodule LongOrShortWeb.FeedLive do
                 {relative_time(article.published_at)}
               </time>
             </div>
-            <div class="font-bold w-16 flex-shrink-0">{article.ticker.symbol}</div>
+
+            <div class="w-20 flex-shrink-0">
+              <div class="font-bold">{article.ticker.symbol}</div>
+              <span
+                id={"price-#{article.id}"}
+                phx-hook=".PriceLabel"
+                data-symbol={article.ticker.symbol}
+                data-initial-price={initial_price_text(article.ticker.last_price)}
+                class="text-xs opacity-60"
+              >
+              </span>
+            </div>
+
             <div class="flex-grow">{article.title}</div>
             <div class="text-xs px-2 py-0.5 rounded bg-base-300 flex-shrink-0">
               {article.source}
@@ -126,6 +142,26 @@ defmodule LongOrShortWeb.FeedLive do
         </div>
       </div>
     </Layouts.app>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".PriceLabel">
+      export default {
+        mounted() {
+          this.symbol = this.el.dataset.symbol
+          const initial = this.el.dataset.initialPrice
+          if (initial && initial !== "") {
+            this.el.textContent = `$${initial}`
+          }
+          this.handler = (e) => {
+            if (e.detail.symbol === this.symbol) {
+              this.el.textContent = `$${e.detail.price}`
+            }
+          }
+          window.addEventListener("phx:price_tick", this.handler)
+        },
+        destroyed() {
+          window.removeEventListener("phx:price_tick", this.handler)
+        }
+      }
+    </script>
     """
   end
 
@@ -208,4 +244,9 @@ defmodule LongOrShortWeb.FeedLive do
       true -> "#{div(diff, 86_400)}d ago"
     end
   end
+
+  defp initial_price_text(%Decimal{} = d), do: d |> Decimal.round(2) |> Decimal.to_string()
+  defp initial_price_text(_), do: ""
+  defp format_price(%Decimal{} = d), do: d |> Decimal.round(2) |> Decimal.to_string()
+  defp format_price(_), do: ""
 end
