@@ -322,5 +322,12 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert_push_event view, "price_tick", %{symbol: "AAPL", price: "100.00"}
       assert_push_event view, "price_tick", %{symbol: "AAPL", price: "101.50"}
     end
+
+    test "nav highlights Feed as active", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ ~r|href="/feed"[^>]*btn-active|
+      refute html =~ ~r|href="/"[^>]*btn-active[^>]*>\s*Dashboard|
+    end
   end
 end

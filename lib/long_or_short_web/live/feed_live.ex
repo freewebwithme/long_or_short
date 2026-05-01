@@ -112,9 +112,15 @@ defmodule LongOrShortWeb.FeedLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_user={@current_user}>
+    <Layouts.app flash={@flash} current_user={@current_user} current_path={@current_path}>
       <div class="max-w-4xl mx-auto p-6">
         <div class="mb-6">
+          <.link
+            navigate={~p"/"}
+            class="text-sm opacity-60 hover:opacity-100 inline-flex items-center gap-1 mb-2"
+          >
+            <.icon name="hero-arrow-left" class="size-3" /> Dashboard
+          </.link>
           <h1 class="text-2xl font-bold">News Feed</h1>
           <p class="text-sm opacity-60 mt-1">
             {@article_count} {if @article_count == 1, do: "update", else: "updates"} received

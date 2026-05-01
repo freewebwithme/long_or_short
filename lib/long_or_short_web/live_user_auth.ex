@@ -36,4 +36,22 @@ defmodule LongOrShortWeb.LiveUserAuth do
       {:cont, assign(socket, :current_user, nil)}
     end
   end
+
+  def on_mount(:assign_current_path, _params, _session, socket) do
+    socket =
+      socket
+      |> Phoenix.Component.assign(:current_path, "/")
+      |> Phoenix.LiveView.attach_hook(
+        :assign_current_path,
+        :handle_params,
+        &assign_current_path_hook/3
+      )
+
+    {:cont, socket}
+  end
+
+  defp assign_current_path_hook(_params, uri, socket) do
+    path = URI.parse(uri).path || "/"
+    {:cont, Phoenix.Component.assign(socket, :current_path, path)}
+  end
 end
