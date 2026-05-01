@@ -53,18 +53,18 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
   end
 
   defp run_sync(api_key) do
-    {:ok, tickers} = Tickers.list_active_tickers(authorize?: false)
-    total = length(tickers)
+    symbols = LongOrShort.Tickers.Watchlist.symbols()
+    total = length(symbols)
 
-    Logger.info("FinnhubProfileSync: starting sync for #{total} tickers")
+    Logger.info("FinnhubProfileSync: starting sync for #{total} watchlist symbols")
 
     {ok_count, err_count} =
-      tickers
+      symbols
       |> Enum.with_index()
-      |> Enum.reduce({0, 0}, fn {ticker, idx}, {ok, err} ->
+      |> Enum.reduce({0, 0}, fn {symbol, idx}, {ok, err} ->
         if idx > 0, do: Process.sleep(@per_symbol_pause_ms)
 
-        case sync_one(ticker, api_key) do
+        case sync_one(symbol, api_key) do
           :ok -> {ok + 1, err}
           {:error, _} -> {ok, err + 1}
         end
@@ -84,14 +84,14 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
     :ok
   end
 
-  defp sync_one(ticker, api_key) do
-    with {:ok, payload} <- fetch_profile(ticker.symbol, api_key),
-         attrs = build_attrs(ticker.symbol, payload),
+  defp sync_one(symbol, api_key) do
+    with {:ok, payload} <- fetch_profile(symbol, api_key),
+         attrs = build_attrs(symbol, payload),
          {:ok, _} <- Tickers.upsert_ticker_by_symbol(attrs, authorize?: false) do
       :ok
     else
       {:error, reason} = err ->
-        Logger.warning("FinnhubProfileSync: #{ticker.symbol} failed — #{inspect(reason)}")
+        Logger.warning("FinnhubProfileSync: #{symbol} failed — #{inspect(reason)}")
         err
     end
   end

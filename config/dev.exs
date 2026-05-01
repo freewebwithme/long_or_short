@@ -96,6 +96,3 @@ config :swoosh, :api_client, false
 # articles every 3 seconds for end-to-end pipeline validation.
 config :long_or_short,
   enabled_news_sources: [LongOrShort.News.Sources.Finnhub, LongOrShort.News.Sources.SecEdgar]
-
-# Temporary symbol list — replace with DB watchlist in LON-36
-config :long_or_short, :finnhub_watch_symbols, ~w(BTBD AAPL TSLA NVDA AMD)

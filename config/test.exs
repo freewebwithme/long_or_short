@@ -60,3 +60,5 @@ config :long_or_short, LongOrShort.AI.Providers.Claude,
 # CIK mapping sync hits the SEC API + DB on boot. Skip in tests —
 # it doesn't play well with the Ecto SQL sandbox.
 config :long_or_short, :sync_cik_on_boot, false
+
+config :long_or_short, :watchlist_override, ~w(AAPL TSLA)

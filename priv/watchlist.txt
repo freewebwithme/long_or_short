@@ -1,0 +1,36 @@
+# Long or Short — local dev watchlist
+# One symbol per line. Lines starting with `#` are comments.
+# Free-tier WebSocket cap: 50 simultaneous subscriptions.
+# Mega caps (sanity reference)
+AAPL
+MSFT
+NVDA
+GOOGL
+META
+AMZN
+TSLA
+AMD
+NFLX
+AVGO
+# Volatility / retail-favorite mid caps
+COIN
+PLTR
+HOOD
+RIVN
+LCID
+NIO
+SOFI
+MARA
+RIOT
+GME
+AMC
+# Small-cap momentum reference (per persona)
+BTBD
+VUZI
+NE
+# Sector representatives
+JPM
+XOM
+PFE
+DIS
+WMT
