@@ -1,11 +1,17 @@
 defmodule LongOrShortWeb.DashboardLive do
   @moduledoc """
   Dashboard skeleton — landing for authenticated users.
+
   Composes four widgets: ticker search, indices, condensed news,
-  watchlist quick view. Each rendered as a placeholder card here;
-  real content arrives via separate sub-tickets (LON-73 — LON-76).
+  watchlist quick view. Search/indices/news still placeholder cards;
+  watchlist is wired to the file-backed watchlist (LON-64) with live
+  prices via the shared `PriceLabel` hook (LON-60).
   """
   use LongOrShortWeb, :live_view
+
+  alias LongOrShortWeb.Format
+  alias LongOrShort.Tickers
+  alias LongOrShort.Tickers.Watchlist
 
   @impl true
   def mount(_params, _session, socket) do
@@ -14,7 +20,18 @@ defmodule LongOrShortWeb.DashboardLive do
       LongOrShort.News.Events.subscribe()
     end
 
-    {:ok, socket}
+    {:ok, assign(socket, :watchlist, load_watchlist(socket.assigns.current_user))}
+  end
+
+  @impl true
+  def handle_info({:price_tick, symbol, price}, socket) do
+    {:noreply, push_event(socket, "price_tick", %{symbol: symbol, price: Format.price(price)})}
+  end
+
+  def handle_info({:new_article, _article}, socket) do
+    # News widget will handle this in LON-73; for now ignore so the
+    # subscription doesn't crash the LV.
+    {:noreply, socket}
   end
 
   @impl true
@@ -27,11 +44,12 @@ defmodule LongOrShortWeb.DashboardLive do
           title="Ticker search"
           hint="Search by symbol or company"
         />
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <.placeholder_card
             id="dash-indices"
             title="Major indices"
-            hint="NASDAQ · DJIA · S&P 500"
+            hint="DJIA · NASDAQ-100 · S&P 500"
           />
           <.placeholder_card
             id="dash-news"
@@ -39,11 +57,8 @@ defmodule LongOrShortWeb.DashboardLive do
             hint="Top headlines across the watchlist"
           />
         </div>
-        <.placeholder_card
-          id="dash-watchlist"
-          title="Watchlist"
-          hint="Live prices for tracked symbols"
-        />
+
+        <.watchlist_card watchlist={@watchlist} />
       </div>
     </Layouts.app>
     """
@@ -61,5 +76,45 @@ defmodule LongOrShortWeb.DashboardLive do
       <div class="mt-4 italic text-xs opacity-40">Coming soon</div>
     </section>
     """
+  end
+
+  attr :watchlist, :list, required: true
+
+  defp watchlist_card(assigns) do
+    ~H"""
+    <section id="dash-watchlist" class="card bg-base-200 border border-base-300 p-4">
+      <h2 class="font-semibold mb-3">Watchlist</h2>
+
+      <div :if={@watchlist == []} class="italic text-xs opacity-60">
+        Add symbols to <code>priv/watchlist.txt</code>
+      </div>
+
+      <ul
+        :if={@watchlist != []}
+        class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5 text-sm"
+      >
+        <li :for={item <- @watchlist} class="flex items-center justify-between">
+          <.link navigate={~p"/feed"} class="font-bold hover:underline">{item.symbol}</.link>
+          <span
+            id={"watchlist-price-#{item.symbol}"}
+            phx-hook="PriceLabel"
+            data-symbol={item.symbol}
+            data-initial-price={Format.price(item.last_price)}
+            class="opacity-60 tabular-nums"
+          >
+          </span>
+        </li>
+      </ul>
+    </section>
+    """
+  end
+
+  defp load_watchlist(actor) do
+    Enum.map(Watchlist.symbols(), fn symbol ->
+      case Tickers.get_ticker_by_symbol(symbol, actor: actor) do
+        {:ok, ticker} -> %{symbol: symbol, last_price: ticker.last_price}
+        _ -> %{symbol: symbol, last_price: nil}
+      end
+    end)
   end
 end

@@ -13,6 +13,7 @@ defmodule LongOrShortWeb.FeedLive do
   """
   use LongOrShortWeb, :live_view
 
+  alias LongOrShortWeb.Format
   alias LongOrShort.{Analysis, News}
   alias LongOrShort.Analysis.{Events, RepetitionAnalyzer}
 
@@ -69,7 +70,7 @@ defmodule LongOrShortWeb.FeedLive do
   end
 
   def handle_info({:price_tick, symbol, price}, socket) do
-    {:noreply, push_event(socket, "price_tick", %{symbol: symbol, price: format_price(price)})}
+    {:noreply, push_event(socket, "price_tick", %{symbol: symbol, price: Format.price(price)})}
   end
 
   @impl true
@@ -179,7 +180,7 @@ defmodule LongOrShortWeb.FeedLive do
           >
             <div class="text-xs opacity-60 w-20 flex-shrink-0">
               <time datetime={DateTime.to_iso8601(article.published_at)}>
-                {relative_time(article.published_at)}
+                {Format.relative_time(article.published_at)}
               </time>
             </div>
 
@@ -189,7 +190,7 @@ defmodule LongOrShortWeb.FeedLive do
                 id={"price-#{article.id}"}
                 phx-hook=".PriceLabel"
                 data-symbol={article.ticker.symbol}
-                data-initial-price={initial_price_text(article.ticker.last_price)}
+                data-initial-price={Format.price(article.ticker.last_price)}
                 class="text-xs opacity-60"
               >
               </span>
@@ -296,22 +297,6 @@ defmodule LongOrShortWeb.FeedLive do
   defp fatigue_color(:medium), do: "bg-warning"
   defp fatigue_color(:high), do: "bg-error"
   defp fatigue_color(_), do: "bg-base-300"
-
-  defp relative_time(%DateTime{} = dt) do
-    diff = DateTime.diff(DateTime.utc_now(), dt, :second)
-
-    cond do
-      diff < 60 -> "just now"
-      diff < 3600 -> "#{div(diff, 60)}m ago"
-      diff < 86_400 -> "#{div(diff, 3600)}h ago"
-      true -> "#{div(diff, 86_400)}d ago"
-    end
-  end
-
-  defp initial_price_text(%Decimal{} = d), do: d |> Decimal.round(2) |> Decimal.to_string()
-  defp initial_price_text(_), do: ""
-  defp format_price(%Decimal{} = d), do: d |> Decimal.round(2) |> Decimal.to_string()
-  defp format_price(_), do: ""
 
   defp empty_filter, do: %{price_min: nil, price_max: nil, float_max: nil}
 
