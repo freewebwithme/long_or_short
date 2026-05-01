@@ -31,6 +31,8 @@ defmodule LongOrShortWeb.Layouts do
     default: nil,
     doc: "the currently authenticated user, if any"
 
+  attr :current_path, :string, default: nil
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -52,8 +54,22 @@ defmodule LongOrShortWeb.Layouts do
         <ul class="flex items-center gap-1 mr-2">
           <li>
             <.link
+              navigate={~p"/"}
+              class={[
+                "btn btn-ghost btn-sm",
+                @current_path == "/" && "btn-active"
+              ]}
+            >
+              Dashboard
+            </.link>
+          </li>
+          <li>
+            <.link
               navigate={~p"/feed"}
-              class="btn btn-ghost btn-sm"
+              class={[
+                "btn btn-ghost btn-sm",
+                @current_path == "/feed" && "btn-active"
+              ]}
             >
               Feed
             </.link>

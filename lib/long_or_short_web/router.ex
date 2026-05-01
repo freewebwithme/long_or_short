@@ -26,7 +26,11 @@ defmodule LongOrShortWeb.Router do
     pipe_through :browser
 
     ash_authentication_live_session :authenticated_routes,
-      on_mount: [{LongOrShortWeb.LiveUserAuth, :live_user_required}] do
+      on_mount: [
+        {LongOrShortWeb.LiveUserAuth, :live_user_required},
+        {LongOrShortWeb.LiveUserAuth, :assign_current_path}
+      ] do
+      live "/", DashboardLive, :index
       live "/feed", FeedLive, :index
     end
   end
@@ -34,7 +38,6 @@ defmodule LongOrShortWeb.Router do
   scope "/", LongOrShortWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
     auth_routes AuthController, LongOrShort.Accounts.User, path: "/auth"
     sign_out_route AuthController
 
