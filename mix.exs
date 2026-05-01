@@ -86,7 +86,8 @@ defmodule LongOrShort.MixProject do
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
-      {:tidewave, "~> 0.5", only: [:dev]}
+      {:tidewave, "~> 0.5", only: [:dev]},
+      {:websockex, "~> 0.4.3"}
     ]
   end
 
