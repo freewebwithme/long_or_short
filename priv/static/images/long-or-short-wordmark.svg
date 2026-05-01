@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 40" fill="none">
+  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="24" font-weight="700">
+    <path d="M4 26 L18 26 L11 10 Z" fill="#22c55e"/>
+    <text x="24" y="29" fill="#22c55e">Long</text>
+    <text x="92" y="29" fill="#6b7280">or</text>
+    <path d="M132 14 L146 14 L139 30 Z" fill="#ef4444"/>
+    <text x="152" y="29" fill="#ef4444">Short</text>
+  </g>
+</svg>
