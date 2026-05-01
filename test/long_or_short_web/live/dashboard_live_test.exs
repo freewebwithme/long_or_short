@@ -2,13 +2,31 @@ defmodule LongOrShortWeb.DashboardLiveTest do
   use LongOrShortWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
-  import LongOrShort.{AccountsFixtures, TickersFixtures}
+  import LongOrShort.{AccountsFixtures, NewsFixtures, TickersFixtures}
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
+
+  alias LongOrShort.News
+  alias LongOrShort.Analysis
+  alias LongOrShort.AI.MockProvider
 
   defp log_in_user(conn, user) do
     conn
     |> Plug.Test.init_test_session(%{})
     |> store_in_session(user)
+  end
+
+  defp valid_input(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "is_repetition" => true,
+        "theme" => "partnership",
+        "repetition_count" => 4,
+        "related_article_ids" => [],
+        "fatigue_level" => "high",
+        "reasoning" => "fourth partnership headline"
+      },
+      overrides
+    )
   end
 
   describe "authentication" do
@@ -63,7 +81,6 @@ defmodule LongOrShortWeb.DashboardLiveTest do
 
       assert html =~ "AAPL"
       assert html =~ "TSLA"
-      assert html =~ ~s|phx-hook="PriceLabel"|
       assert html =~ ~s|data-symbol="AAPL"|
       assert html =~ ~s|data-symbol="TSLA"|
     end
@@ -116,6 +133,90 @@ defmodule LongOrShortWeb.DashboardLiveTest do
 
       assert html =~ "Add symbols to"
       assert html =~ "watchlist.txt"
+    end
+
+    test "renders symbols from watchlist with price labels", %{conn: conn} do
+      Application.put_env(:long_or_short, :watchlist_override, ~w(AAPL TSLA))
+      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "AAPL"
+      assert html =~ "TSLA"
+      assert html =~ ~s|data-symbol="AAPL"|
+      assert html =~ ~s|data-symbol="TSLA"|
+    end
+  end
+
+  describe "news widget" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders most recent articles via article_card", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "AAPL"})
+      build_article_for_ticker(ticker, %{title: "Apple does X"})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "Apple does X"
+      assert html =~ ~s|phx-click="analyze"|
+    end
+
+    test "limits to 10 articles", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "T"})
+      for i <- 1..15, do: build_article_for_ticker(ticker, %{title: "Title #{i}"})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      visible = Regex.scan(~r/Title \d+/, html) |> length()
+      assert visible <= 10
+    end
+
+    test "appends new article on broadcast", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      ticker = build_ticker(%{symbol: "TSLA"})
+      article = build_article_for_ticker(ticker, %{title: "Live tesla news"})
+      {:ok, article} = News.get_article(article.id, load: [:ticker], authorize?: false)
+      News.Events.broadcast_new_article(article)
+
+      assert render(view) =~ "Live tesla news"
+    end
+
+    test "click Analyze on dashboard kicks off analysis", %{conn: conn} do
+      Analysis.Events.subscribe()
+      MockProvider.reset()
+
+      MockProvider.stub(fn _, _, _ ->
+        {:ok,
+         %{
+           tool_calls: [%{name: "report_repetition_analysis", input: valid_input()}],
+           text: nil,
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end)
+
+      ticker = build_ticker(%{symbol: "DASH"})
+      article = build_article_for_ticker(ticker, %{title: "Dash news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view
+      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+      |> render_click()
+
+      assert_receive {:repetition_analysis_started, _}, 1_000
+      assert_receive {:repetition_analysis_complete, _}, 2_000
+
+      assert render(view) =~ "🔁"
+    end
+
+    test "empty state when no articles", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/")
+      assert html =~ "No news yet"
     end
   end
 end

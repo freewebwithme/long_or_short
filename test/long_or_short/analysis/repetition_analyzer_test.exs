@@ -1,7 +1,7 @@
 defmodule LongOrShort.Analysis.RepetitionAnalyzerTest do
   use LongOrShort.DataCase, async: true
 
-  import LongOrShort.NewsFixtures
+  import LongOrShort.{NewsFixtures, TickersFixtures}
 
   alias LongOrShort.AI.MockProvider
   alias LongOrShort.Analysis
