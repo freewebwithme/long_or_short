@@ -26,22 +26,12 @@ defmodule LongOrShortWeb.FeedLive do
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
     end
 
-    actor = socket.assigns.current_user
-
-    {:ok, articles} =
-      News.list_recent_articles(
-        %{limit: @initial_limit},
-        load: [:ticker],
-        actor: actor
-      )
-
-    analyses = load_latest_analyses(articles, actor)
+    filter = empty_filter()
 
     socket =
       socket
-      |> assign(:article_count, length(articles))
-      |> assign(:analyses, analyses)
-      |> stream(:articles, articles)
+      |> assign(:filter, filter)
+      |> load_articles_with_filter(filter)
 
     {:ok, socket}
   end
@@ -52,6 +42,28 @@ defmodule LongOrShortWeb.FeedLive do
       LongOrShort.Analysis.TaskSupervisor,
       fn -> RepetitionAnalyzer.analyze(article_id) end
     )
+
+    {:noreply, socket}
+  end
+
+  def handle_event("filter_changed", %{"filter" => params}, socket) do
+    filter = parse_filter(params)
+
+    socket =
+      socket
+      |> assign(:filter, filter)
+      |> load_articles_with_filter(filter)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("clear_filter", _params, socket) do
+    filter = empty_filter()
+
+    socket =
+      socket
+      |> assign(:filter, filter)
+      |> load_articles_with_filter(filter)
 
     {:noreply, socket}
   end
@@ -67,12 +79,16 @@ defmodule LongOrShortWeb.FeedLive do
            actor: socket.assigns.current_user
          ) do
       {:ok, article} ->
-        socket =
-          socket
-          |> stream_insert(:articles, article, at: 0)
-          |> update(:article_count, &(&1 + 1))
+        if matches_filter?(article, socket.assigns.filter) do
+          socket =
+            socket
+            |> stream_insert(:articles, article, at: 0)
+            |> update(:article_count, &(&1 + 1))
 
-        {:noreply, socket}
+          {:noreply, socket}
+        else
+          {:noreply, socket}
+        end
 
       {:error, _} ->
         {:noreply, socket}
@@ -104,7 +120,48 @@ defmodule LongOrShortWeb.FeedLive do
             {@article_count} {if @article_count == 1, do: "update", else: "updates"} received
           </p>
         </div>
-
+        <form
+          phx-change="filter_changed"
+          phx-debounce="300"
+          class="mb-4 flex gap-3 items-end flex-wrap"
+        >
+          <div>
+            <label class="text-xs opacity-60 block">Price min</label>
+            <input
+              type="number"
+              step="0.01"
+              name="filter[price_min]"
+              value={input_value(@filter.price_min)}
+              placeholder="2"
+              class="input input-sm input-bordered w-24"
+            />
+          </div>
+          <div>
+            <label class="text-xs opacity-60 block">Price max</label>
+            <input
+              type="number"
+              step="0.01"
+              name="filter[price_max]"
+              value={input_value(@filter.price_max)}
+              placeholder="10"
+              class="input input-sm input-bordered w-24"
+            />
+          </div>
+          <div>
+            <label class="text-xs opacity-60 block">Float max (M)</label>
+            <input
+              type="number"
+              step="1"
+              name="filter[float_max]"
+              value={input_value_millions(@filter.float_max)}
+              placeholder="50"
+              class="input input-sm input-bordered w-24"
+            />
+          </div>
+          <button type="button" phx-click="clear_filter" class="btn btn-sm btn-ghost">
+            Clear
+          </button>
+        </form>
         <div :if={@article_count == 0} class="opacity-60 italic py-8 text-center">
           No articles yet — waiting for news...
         </div>
@@ -249,4 +306,82 @@ defmodule LongOrShortWeb.FeedLive do
   defp initial_price_text(_), do: ""
   defp format_price(%Decimal{} = d), do: d |> Decimal.round(2) |> Decimal.to_string()
   defp format_price(_), do: ""
+
+  defp empty_filter, do: %{price_min: nil, price_max: nil, float_max: nil}
+
+  defp load_articles_with_filter(socket, filter) do
+    actor = socket.assigns.current_user
+
+    args =
+      %{limit: @initial_limit}
+      |> maybe_put(:price_min, filter.price_min)
+      |> maybe_put(:price_max, filter.price_max)
+      |> maybe_put(:float_max, filter.float_max)
+
+    {:ok, articles} =
+      News.list_recent_articles(args, load: [:ticker], actor: actor)
+
+    analyses = load_latest_analyses(articles, actor)
+
+    socket
+    |> assign(:article_count, length(articles))
+    |> assign(:analyses, analyses)
+    |> stream(:articles, articles, reset: true)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp parse_filter(params) do
+    %{
+      price_min: parse_decimal(params["price_min"]),
+      price_max: parse_decimal(params["price_max"]),
+      float_max: parse_float_millions(params["float_max"])
+    }
+  end
+
+  defp parse_decimal(s) when s in [nil, ""], do: nil
+
+  defp parse_decimal(s) when is_binary(s) do
+    case Decimal.parse(s) do
+      {decimal, _rest} -> decimal
+      :error -> nil
+    end
+  end
+
+  defp parse_float_millions(s) when s in [nil, ""], do: nil
+
+  defp parse_float_millions(s) when is_binary(s) do
+    case Integer.parse(s) do
+      {n, _} when n > 0 -> n * 1_000_000
+      _ -> nil
+    end
+  end
+
+  defp matches_filter?(article, filter) do
+    ticker = article.ticker
+
+    matches_price_min?(ticker, filter.price_min) and
+      matches_price_max?(ticker, filter.price_max) and
+      matches_float_max?(ticker, filter.float_max)
+  end
+
+  defp matches_price_min?(_ticker, nil), do: true
+  defp matches_price_min?(%{last_price: nil}, _min), do: false
+  defp matches_price_min?(%{last_price: lp}, min), do: Decimal.compare(lp, min) != :lt
+
+  defp matches_price_max?(_ticker, nil), do: true
+  defp matches_price_max?(%{last_price: nil}, _max), do: false
+  defp matches_price_max?(%{last_price: lp}, max), do: Decimal.compare(lp, max) != :gt
+
+  defp matches_float_max?(_ticker, nil), do: true
+  defp matches_float_max?(%{float_shares: nil}, _max), do: false
+  defp matches_float_max?(%{float_shares: fs}, max), do: fs <= max
+
+  defp input_value(nil), do: ""
+  defp input_value(%Decimal{} = d), do: Decimal.to_string(d)
+  defp input_value(v), do: to_string(v)
+
+  defp input_value_millions(nil), do: ""
+  defp input_value_millions(n) when is_integer(n), do: to_string(div(n, 1_000_000))
 end
