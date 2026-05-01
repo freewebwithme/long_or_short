@@ -4,7 +4,6 @@ defmodule LongOrShort.NewsFixtures do
   """
 
   alias LongOrShort.News
-  alias LongOrShort.TickersFixtures
 
   @doc """
   Returns a map of valid attributes for ingesting an article.
@@ -84,8 +83,4 @@ defmodule LongOrShort.NewsFixtures do
         """
     end
   end
-
-  # Re-export for convenience so test files only need one import.
-  defdelegate build_ticker(overrides), to: TickersFixtures
-  defdelegate build_ticker(), to: TickersFixtures
 end

@@ -16,6 +16,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
   import Phoenix.LiveViewTest
   import LongOrShort.AccountsFixtures
   import LongOrShort.NewsFixtures
+  import LongOrShort.TickersFixtures
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
   alias LongOrShort.News

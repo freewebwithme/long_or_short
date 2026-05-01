@@ -8,7 +8,7 @@ defmodule LongOrShort.News.ArticleTest do
 
   use LongOrShort.DataCase, async: true
 
-  import LongOrShort.{NewsFixtures, AccountsFixtures}
+  import LongOrShort.{NewsFixtures, TickersFixtures, AccountsFixtures}
 
   alias LongOrShort.News
   alias LongOrShort.Tickers
