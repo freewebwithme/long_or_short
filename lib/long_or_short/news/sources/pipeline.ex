@@ -66,11 +66,11 @@ defmodule LongOrShort.News.Sources.Pipeline do
       conflict (i.e. `:retry_count` is always 0 at startup).
   """
   @spec init(module(), keyword()) :: {:ok, map()}
-  def init(_module, opts \\ []) do
+  def init(module, opts \\ []) do
     initial_custom = Keyword.get(opts, :state, %{})
     state = Map.merge(initial_custom, %{retry_count: 0})
 
-    schedule_immediately()
+    schedule_first_poll(module)
     {:ok, state}
   end
 
@@ -208,8 +208,39 @@ defmodule LongOrShort.News.Sources.Pipeline do
     LongOrShort.News.Events.broadcast_new_article(article)
   end
 
-  defp schedule_immediately, do: Process.send_after(self(), @poll_message, 0)
+  defp schedule_first_poll(module) do
+    interval = module.poll_interval_ms()
+
+    case last_success_age_ms(module) do
+      nil ->
+        schedule_next(0)
+
+      age_ms when age_ms >= interval ->
+        schedule_next(0)
+
+      age_ms ->
+        delay = interval - age_ms
+
+        Logger.info(
+          "#{inspect(module)}: deferring first poll by #{delay}ms " <>
+            "(last success #{age_ms}ms ago)"
+        )
+
+        schedule_next(delay)
+    end
+  end
+
   defp schedule_next(interval_ms), do: Process.send_after(self(), @poll_message, interval_ms)
+
+  defp last_success_age_ms(module) do
+    case Sources.get_source_state(module.source_name(), authorize?: false) do
+      {:ok, %{last_success_at: %DateTime{} = dt}} ->
+        DateTime.diff(DateTime.utc_now(), dt, :millisecond)
+
+      _ ->
+        nil
+    end
+  end
 
   defp update_source_state(module, :success) do
     Sources.upsert_source_state(

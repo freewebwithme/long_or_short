@@ -10,7 +10,7 @@ config :long_or_short, LongOrShort.Repo,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10,
-  log: :info
+  log: false
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
