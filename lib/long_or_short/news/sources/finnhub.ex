@@ -2,39 +2,23 @@ defmodule LongOrShort.News.Sources.Finnhub do
   @moduledoc """
   Finnhub company-news feeder.
 
-  Polls `/api/v1/company-news` for each ticker in the configured
-  watchlist every 60 seconds (free tier: 60 calls/min).
+  Polls `/api/v1/company-news` for each symbol in
+  `LongOrShort.Tickers.Watchlist` every 60 seconds (free tier:
+  60 calls/min). Each poll fetches the last 3 days of news per
+  symbol. The `related` field is a single ticker string — no
+  splitting needed.
 
-  Tickers are configured via `:finnhub_watch_symbols`:
-
-      config :long_or_short, :finnhub_watch_symbols, ~w(BTBD AAPL TSLA NVDA AMD)
-
-  Each poll fetches the last 3 days of news per ticker.
-  `related` field is a single ticker string — no splitting needed.
-
-  ## ⚠️ Temporary config — replace before LON-36
-
-  The symbol list is currently read from application config
-  (`:finnhub_watch_symbols`) as a temporary measure for pipeline
-  validation. This must be replaced with a DB-based watchlist before
-  LON-36 ships:
-
-      # Replace this:
-      Application.get_env(:long_or_short, :finnhub_watch_symbols, @default_symbols)
-
-      # With this (LON-36):
-      LongOrShort.Tickers.list_active_tickers() |> Enum.map(& &1.symbol)
-
-  See LON-36 for the full watchlist feature design.
+  LON-36 will swap the watchlist source for a per-user DB-backed
+  list; this module's call site stays the same.
   """
 
   use GenServer
   @behaviour LongOrShort.News.Source
 
   alias LongOrShort.News.Sources.Pipeline
+  alias LongOrShort.Tickers.Watchlist
 
   @base_url "https://finnhub.io/api/v1/company-news"
-  @default_symbols ~w(BTBD AAPL TSLA NVDA AMD)
 
   # ── GenServer setup ────────────────────────────────────────────
 
@@ -55,7 +39,7 @@ defmodule LongOrShort.News.Sources.Finnhub do
   @impl LongOrShort.News.Source
   def fetch_news(state) do
     api_key = Application.get_env(:long_or_short, :finnhub_api_key)
-    symbols = Application.get_env(:long_or_short, :finnhub_watch_symbols, @default_symbols)
+    symbols = Watchlist.symbols()
 
     from =
       case LongOrShort.Sources.get_source_state(:finnhub, authorize?: false) do
