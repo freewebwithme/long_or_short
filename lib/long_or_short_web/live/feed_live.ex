@@ -112,7 +112,7 @@ defmodule LongOrShortWeb.FeedLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_user={@current_user}>
       <div class="max-w-4xl mx-auto p-6">
         <div class="mb-6">
           <h1 class="text-2xl font-bold">News Feed</h1>
