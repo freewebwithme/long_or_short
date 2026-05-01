@@ -224,6 +224,15 @@ defmodule LongOrShort.News.Article do
 
     read :recent do
       argument :limit, :integer, default: 50
+      argument :price_min, :decimal
+      argument :price_max, :decimal
+      argument :float_max, :integer
+
+      filter expr(
+               (is_nil(^arg(:price_min)) or ticker.last_price >= ^arg(:price_min)) and
+                 (is_nil(^arg(:price_max)) or ticker.last_price <= ^arg(:price_max)) and
+                 (is_nil(^arg(:float_max)) or ticker.float_shares <= ^arg(:float_max))
+             )
 
       prepare build(sort: [published_at: :desc])
       prepare build(limit: arg(:limit))
