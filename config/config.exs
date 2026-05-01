@@ -18,6 +18,8 @@ config :long_or_short, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
+       # Daily at 04:00 UTC — SEC mapping refresh (large, run first)
+       {"0 4 * * *", LongOrShort.Sec.CikSyncWorker},
        # Daily at 05:00 UTC (~1am EST) — well after US market close.
        {"0 5 * * *", LongOrShort.Tickers.Workers.FinnhubProfileSync}
      ]}

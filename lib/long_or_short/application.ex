@@ -30,16 +30,7 @@ defmodule LongOrShort.Application do
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: LongOrShort.Supervisor]
 
-    case Supervisor.start_link(children, opts) do
-      {:ok, _pid} = ok ->
-        # Sync SEC CIK ↔ ticker mapping in the background. Fire-and-forget:
-        # if it fails, log and let SEC source skip unmapped CIKs gracefully.
-        maybe_sync_cik_mapping()
-        ok
-
-      other ->
-        other
-    end
+    Supervisor.start_link(children, opts)
   end
 
   # Tell Phoenix to update the endpoint configuration
@@ -48,12 +39,6 @@ defmodule LongOrShort.Application do
   def config_change(changed, _new, removed) do
     LongOrShortWeb.Endpoint.config_change(changed, removed)
     :ok
-  end
-
-  defp maybe_sync_cik_mapping do
-    if Application.get_env(:long_or_short, :sync_cik_on_boot, true) do
-      Task.start(fn -> LongOrShort.Sec.CikMapper.sync() end)
-    end
   end
 
   defp maybe_price_stream do
