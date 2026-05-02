@@ -62,13 +62,9 @@ defmodule LongOrShortWeb.DashboardLive do
         "" ->
           []
 
-        raw ->
-          pattern = "%#{raw}%"
-          IO.inspect(pattern)
-
-          case Tickers.search_tickers(pattern, actor: actor) do
+        query ->
+          case Tickers.search_tickers(query, actor: actor) do
             {:ok, list} ->
-              IO.inspect(list)
               list
 
             _ ->
@@ -86,14 +82,15 @@ defmodule LongOrShortWeb.DashboardLive do
     actor = socket.assigns.current_user
 
     with {:ok, ticker} <- Tickers.get_ticker_by_symbol(symbol, actor: actor),
-         {:ok, articles} <- News.list_articles_by_ticker(symbol, load: [:ticker], actor: actor) do
+         {:ok, articles} <-
+           News.list_articles_by_ticker_symbol(symbol, load: [:ticker], actor: actor) do
       {:noreply,
        socket
        |> assign(:active_ticker, ticker)
        |> assign(:active_news, articles)
        |> assign(:search_query, ticker.symbol)
        |> assign(:search_results, [])
-       |> assign(:analyses, load_latest_analyses(articles, actor))}
+       |> assign(:active_analyses, load_latest_analyses(articles, actor))}
     else
       _ -> {:noreply, socket}
     end
@@ -106,7 +103,7 @@ defmodule LongOrShortWeb.DashboardLive do
      |> assign(:search_results, [])
      |> assign(:active_ticker, nil)
      |> assign(:active_news, [])
-     |> assign(:analyses, %{})}
+     |> assign(:active_analyses, %{})}
   end
 
   @impl true
@@ -137,14 +134,26 @@ defmodule LongOrShortWeb.DashboardLive do
              :repetition_analysis_complete,
              :repetition_analysis_failed
            ] do
-    {:noreply, update(socket, :analyses, &Map.put(&1, id, analysis))}
+    active_ids = socket.assigns.active_news |> Enum.map(& &1.id) |> MapSet.new()
+
+    socket =
+      update(socket, :analyses, &Map.put(&1, id, analysis))
+
+    socket =
+      if MapSet.member?(active_ids, id) do
+        update(socket, :active_analyses, &Map.put(&1, id, analysis))
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_user={@current_user} current_path={@current_path}>
-      <div class="space-y-4">
+      <div class="space-y-4" phx-window-keydown="clear_search" phx-key="Escape">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <.placeholder_card
             id="dash-indices"
@@ -241,6 +250,7 @@ defmodule LongOrShortWeb.DashboardLive do
           :for={article <- @news}
           article={article}
           analysis={Map.get(@analyses, article.id)}
+          context="active"
         />
       </div>
     </section>
@@ -250,9 +260,9 @@ defmodule LongOrShortWeb.DashboardLive do
   defp search_card(assigns) do
     ~H"""
     <section id="dash-search" class="card bg-base-200 border border-base-300 p-4">
-      <h2 class="font-semibold mb-3">Search</h2>
+      <h2 class="font-semibold mb-3">Ticker search</h2>
 
-      <form phx-change="search" autocomplete="off">
+      <form phx-change="search" phx-submit="search" autocomplete="off">
         <div class="relative">
           <input
             type="text"
@@ -357,6 +367,7 @@ defmodule LongOrShortWeb.DashboardLive do
           :for={article <- @news}
           article={article}
           analysis={Map.get(@analyses, article.id)}
+          context="global"
         />
       </div>
     </section>

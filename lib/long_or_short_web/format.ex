@@ -51,10 +51,10 @@ defmodule LongOrShortWeb.Format do
   """
   @spec shares(any()) :: String.t()
   def shares(n) when is_integer(n) and n >= 1_000_000_000,
-    do: "#{Float.round(n / 1_000_000_000, 2)}B"
+    do: :erlang.float_to_binary(n / 1_000_000_000, decimals: 2) <> "B"
 
   def shares(n) when is_integer(n) and n >= 1_000_000,
-    do: "#{Float.round(n / 1_000_000, 2)}M"
+    do: :erlang.float_to_binary(n / 1_000_000, decimals: 2) <> "M"
 
   def shares(n) when is_integer(n) and n >= 0,
     do: Integer.to_string(n)

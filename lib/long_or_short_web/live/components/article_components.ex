@@ -24,6 +24,7 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
   """
   attr :article, :map, required: true
   attr :analysis, :any, default: nil
+  attr :context, :string, default: "card"
 
   def article_card(assigns) do
     ~H"""
@@ -37,7 +38,7 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
       <div class="w-20 flex-shrink-0">
         <div class="font-bold">{@article.ticker.symbol}</div>
         <.price_label
-          id={"price-#{@article.id}"}
+          id={"price-#{@context}-#{@article.id}"}
           symbol={@article.ticker.symbol}
           initial_price={@article.ticker.last_price}
           class="text-xs opacity-60"

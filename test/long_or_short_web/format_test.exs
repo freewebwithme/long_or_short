@@ -50,7 +50,7 @@ defmodule LongOrShortWeb.FormatTest do
     end
 
     test "millions" do
-      assert Format.shares(50_000_000) == "50.0M"
+      assert Format.shares(50_000_000) == "50.00M"
     end
 
     test "below 1M shows raw" do
