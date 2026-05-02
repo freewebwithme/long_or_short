@@ -1,6 +1,6 @@
 defmodule LongOrShortWeb.FormatTest do
   use ExUnit.Case, async: true
-  doctest LongOrShortWeb.Format, except: [relative_time: 1]
+  doctest LongOrShortWeb.Format, except: [relative_time: 1], import: true
 
   alias LongOrShortWeb.Format
 

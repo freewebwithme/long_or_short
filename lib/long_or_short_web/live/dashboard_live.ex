@@ -9,7 +9,7 @@ defmodule LongOrShortWeb.DashboardLive do
   """
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.{Analysis, News, Tickers}
+  alias LongOrShort.{Analysis, Indices, News, Tickers}
   alias LongOrShort.Analysis.{Events, RepetitionAnalyzer}
   alias LongOrShort.Tickers.Watchlist
   alias LongOrShortWeb.Format
@@ -23,6 +23,7 @@ defmodule LongOrShortWeb.DashboardLive do
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
       News.Events.subscribe()
       Events.subscribe()
+      Indices.Events.subscribe()
     end
 
     actor = socket.assigns.current_user
@@ -39,6 +40,7 @@ defmodule LongOrShortWeb.DashboardLive do
       |> assign(:search_query, "")
       |> assign(:search_results, [])
       |> assign(:active_ticker, nil)
+      |> assign(:indices, %{})
 
     {:ok, socket}
   end
@@ -128,6 +130,10 @@ defmodule LongOrShortWeb.DashboardLive do
     end
   end
 
+  def handle_info({:index_tick, label, payload}, socket) do
+    {:noreply, update(socket, :indices, &Map.put(&1, label, payload))}
+  end
+
   def handle_info({event, %{article_id: id} = analysis}, socket)
       when event in [
              :repetition_analysis_started,
@@ -155,11 +161,7 @@ defmodule LongOrShortWeb.DashboardLive do
     <Layouts.app flash={@flash} current_user={@current_user} current_path={@current_path}>
       <div class="space-y-4" phx-window-keydown="clear_search" phx-key="Escape">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <.placeholder_card
-            id="dash-indices"
-            title="Major indices"
-            hint="DJIA · NASDAQ-100 · S&P 500"
-          />
+          <.indices_card indices={@indices} />
           <.watchlist_card watchlist={@watchlist} />
         </div>
         
@@ -183,6 +185,38 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   # ── Cards ───────────────────────────────────────────────────────
+  attr :indices, :map, required: true
+
+  defp indices_card(assigns) do
+    ~H"""
+    <section id="dash-indices" class="card bg-base-200 border border-base-300 p-4">
+      <h2 class="font-semibold mb-3">Major indices</h2>
+      <div class="grid grid-cols-3 gap-4 text-center">
+        <.index_tile
+          :for={label <- ["DJIA", "NASDAQ-100", "S&P 500"]}
+          label={label}
+          data={Map.get(@indices, label)}
+        />
+      </div>
+    </section>
+    """
+  end
+
+  attr :label, :string, required: true
+  attr :data, :any, default: nil
+
+  defp index_tile(assigns) do
+    ~H"""
+    <div title={index_tooltip(@data)}>
+      <div class="text-xs font-semibold opacity-60">{@label}</div>
+      <div :if={@data} class={["text-lg font-bold tabular-nums", index_color(@data.change_pct)]}>
+        {index_arrow(@data.change_pct)}{Format.pct(@data.change_pct)}
+      </div>
+      <div :if={!@data} class="text-sm opacity-30 mt-1">—</div>
+    </div>
+    """
+  end
+
   attr :active_ticker, :any, required: true
 
   defp ticker_info_card(assigns) do
@@ -307,20 +341,6 @@ defmodule LongOrShortWeb.DashboardLive do
     """
   end
 
-  attr :id, :string, required: true
-  attr :title, :string, required: true
-  attr :hint, :string, default: ""
-
-  defp placeholder_card(assigns) do
-    ~H"""
-    <section id={@id} class="card bg-base-200 border border-base-300 p-6">
-      <h2 class="font-semibold">{@title}</h2>
-      <p :if={@hint != ""} class="text-sm opacity-60 mt-1">{@hint}</p>
-      <div class="mt-4 italic text-xs opacity-40">Coming soon</div>
-    </section>
-    """
-  end
-
   attr :watchlist, :list, required: true
 
   defp watchlist_card(assigns) do
@@ -402,5 +422,29 @@ defmodule LongOrShortWeb.DashboardLive do
         _ -> acc
       end
     end)
+  end
+
+  defp index_color(pct) do
+    cond do
+      Decimal.compare(pct, Decimal.new("0.01")) == :gt -> "text-success"
+      Decimal.compare(pct, Decimal.new("-0.01")) == :lt -> "text-error"
+      true -> "opacity-60"
+    end
+  end
+
+  defp index_arrow(pct) do
+    cond do
+      Decimal.compare(pct, Decimal.new("0.01")) == :gt -> "↑ "
+      Decimal.compare(pct, Decimal.new("-0.01")) == :lt -> "↓ "
+      true -> ""
+    end
+  end
+
+  defp index_tooltip(nil), do: ""
+
+  defp index_tooltip(%{symbol: sym, current: cur, prev_close: pc, fetched_at: at}) do
+    diff = DateTime.diff(DateTime.utc_now(), at, :second)
+    age = if diff < 60, do: "#{diff}s ago", else: "#{div(diff, 60)}m ago"
+    "#{sym} · $#{cur} · prev close $#{pc} · updated #{age}"
   end
 end

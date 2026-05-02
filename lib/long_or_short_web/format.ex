@@ -12,11 +12,11 @@ defmodule LongOrShortWeb.Format do
   non-Decimal values render as an empty string so callers can
   drop the result directly into HEEx without nil-guards.
 
-      iex> LongOrShortWeb.Format.price(Decimal.new("215.42"))
+      iex> price(Decimal.new("215.42"))
       "215.42"
-      iex> LongOrShortWeb.Format.price(Decimal.new("100"))
+      iex> price(Decimal.new("100"))
       "100.00"
-      iex> LongOrShortWeb.Format.price(nil)
+      iex> price(nil)
       ""
   """
   @spec price(any()) :: String.t()
@@ -42,11 +42,11 @@ defmodule LongOrShortWeb.Format do
   @doc """
   Format a large share/volume count compactly.
 
-      iex> LongOrShortWeb.Format.shares(16_350_000_000)
+      iex> shares(16_350_000_000)
       "16.35B"
-      iex> LongOrShortWeb.Format.shares(50_000_000)
+      iex> shares(50_000_000)
       "50.00M"
-      iex> LongOrShortWeb.Format.shares(nil)
+      iex> shares(nil)
       "—"
   """
   @spec shares(any()) :: String.t()
@@ -60,4 +60,23 @@ defmodule LongOrShortWeb.Format do
     do: Integer.to_string(n)
 
   def shares(_), do: "—"
+
+  @doc """
+  Formats a percent change Decimal with sign-less 2-decimal precision.
+
+  iex> pct(Decimal.new("0.84"))
+  "0.84%"
+
+  iex> pct(Decimal.new("-1.234"))
+  "-1.23%"
+
+  iex> pct(nil)
+  "—"
+  """
+  @spec pct(Decimal.t() | nil) :: String.t()
+  def pct(nil), do: "—"
+
+  def pct(%Decimal{} = d) do
+    d |> Decimal.round(2) |> Decimal.to_string() |> then(&"#{&1}%")
+  end
 end

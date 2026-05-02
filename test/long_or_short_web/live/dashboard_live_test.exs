@@ -293,4 +293,77 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert html =~ "No news yet"
     end
   end
+
+  describe "indices widget" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders three index labels before any tick", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ ~s|id="dash-indices"|
+      assert html =~ "DJIA"
+      assert html =~ "NASDAQ-100"
+      assert html =~ "S&amp;P 500"
+    end
+
+    test "renders percent change with success color on positive tick", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      payload = %{
+        current: Decimal.new("420.13"),
+        change_pct: Decimal.new("0.84"),
+        prev_close: Decimal.new("416.62"),
+        symbol: "DIA",
+        fetched_at: DateTime.utc_now()
+      }
+
+      LongOrShort.Indices.Events.broadcast("DJIA", payload)
+
+      html = view |> element("#dash-indices") |> render()
+      assert html =~ "0.84%"
+      assert html =~ "text-success"
+    end
+
+    test "renders error color on negative tick", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      payload = %{
+        current: Decimal.new("100"),
+        change_pct: Decimal.new("-0.50"),
+        prev_close: Decimal.new("100.50"),
+        symbol: "QQQ",
+        fetched_at: DateTime.utc_now()
+      }
+
+      LongOrShort.Indices.Events.broadcast("NASDAQ-100", payload)
+
+      html = view |> element("#dash-indices") |> render()
+      assert html =~ "-0.50%"
+      assert html =~ "text-error"
+    end
+
+    test "neutral tick (|dp| < 0.01) renders without arrow or color class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      payload = %{
+        current: Decimal.new("500"),
+        change_pct: Decimal.new("0.005"),
+        prev_close: Decimal.new("500"),
+        symbol: "SPY",
+        fetched_at: DateTime.utc_now()
+      }
+
+      LongOrShort.Indices.Events.broadcast("S&P 500", payload)
+
+      html = view |> element("#dash-indices") |> render()
+      refute html =~ "text-success"
+      refute html =~ "text-error"
+      refute html =~ "↑"
+      refute html =~ "↓"
+    end
+  end
 end
