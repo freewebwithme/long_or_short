@@ -26,6 +26,8 @@ defmodule LongOrShort.News do
       define :list_recent_articles_for_ticker,
         action: :recent_for_ticker,
         args: [:ticker_id, :since]
+
+      define :list_articles_by_ticker_symbol, action: :by_ticker_symbol, args: [:symbol]
     end
   end
 end

@@ -148,6 +148,80 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
   end
 
+  describe "search widget" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "returns matching tickers for partial symbol query", %{conn: conn} do
+      build_ticker(%{symbol: "NVDA", company_name: "Nvidia Corp"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        view
+        |> form("#dash-search form", %{query: "NVD"})
+        |> render_change()
+
+      assert html =~ "NVDA"
+      assert html =~ "Nvidia Corp"
+    end
+
+    test "shows no matches message for unrecognised query", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        view
+        |> form("#dash-search form", %{query: "ZZZNOTREAL"})
+        |> render_change()
+
+      assert html =~ "No matches"
+      refute html =~ ~s|phx-click="select_ticker"|
+    end
+
+    test "selecting ticker renders info panel and ticker news", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "TSTSYM", company_name: "Test Corp"})
+      build_article_for_ticker(ticker, %{title: "Test ticker news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> form("#dash-search form", %{query: "TSTSYM"}) |> render_change()
+
+      html =
+        view
+        |> element("button[phx-click='select_ticker'][phx-value-symbol='TSTSYM']")
+        |> render_click()
+
+      assert html =~ "TSTSYM"
+      assert html =~ "Test Corp"
+      assert html =~ "Test ticker news"
+    end
+
+    test "clear_search resets info panel (ESC routes here)", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "CLRSYM", company_name: "Clear Corp"})
+      build_article_for_ticker(ticker, %{title: "Clear ticker news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> form("#dash-search form", %{query: "CLRSYM"}) |> render_change()
+
+      view
+      |> element("button[phx-click='select_ticker'][phx-value-symbol='CLRSYM']")
+      |> render_click()
+
+      # Info panel shows ticker company name
+      assert render(view) =~ "Clear Corp"
+
+      html = render_click(view, "clear_search")
+
+      # Info panel placeholder restored; company name (info panel only) is gone
+      refute html =~ "Clear Corp"
+      assert html =~ "Search and select a ticker"
+    end
+  end
+
   describe "news widget" do
     setup %{conn: conn} do
       user = build_trader_user()

@@ -182,6 +182,22 @@ defmodule LongOrShort.Tickers.Ticker do
     read :active do
       filter expr(is_active == true)
     end
+
+    read :search do
+      argument :query, :string, allow_nil?: false
+
+      prepare fn query, _ ->
+        raw = Ash.Query.get_argument(query, :query) || ""
+        Ash.Query.set_argument(query, :query, "%#{raw}%")
+      end
+
+      filter expr(
+               ilike(symbol, ^arg(:query)) or
+                 ilike(company_name, ^arg(:query))
+             )
+
+      prepare build(sort: [is_active: :desc, symbol: :asc], limit: 10)
+    end
   end
 
   # ─────────────────────────────────────────────────────────────────────
