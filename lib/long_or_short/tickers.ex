@@ -30,6 +30,7 @@ defmodule LongOrShort.Tickers do
       define :list_active_tickers, action: :active
       define :list_tickers, action: :read
       define :destroy_ticker, action: :destroy
+      define :search_tickers, action: :search, args: [:query]
     end
   end
 end

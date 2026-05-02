@@ -182,6 +182,17 @@ defmodule LongOrShort.Tickers.Ticker do
     read :active do
       filter expr(is_active == true)
     end
+
+    read :search do
+      argument :query, :string, allow_nil?: false
+
+      filter expr(
+               contains(symbol, ^arg(:query)) or
+                 contains(company_name, ^arg(:query))
+             )
+
+      prepare build(sort: [is_active: :desc, symbol: :asc], limit: 10)
+    end
   end
 
   # ─────────────────────────────────────────────────────────────────────

@@ -38,4 +38,26 @@ defmodule LongOrShortWeb.Format do
       true -> "#{div(diff, 86_400)}d ago"
     end
   end
+
+  @doc """
+  Format a large share/volume count compactly.
+
+      iex> LongOrShortWeb.Format.shares(16_350_000_000)
+      "16.35B"
+      iex> LongOrShortWeb.Format.shares(50_000_000)
+      "50.00M"
+      iex> LongOrShortWeb.Format.shares(nil)
+      "—"
+  """
+  @spec shares(any()) :: String.t()
+  def shares(n) when is_integer(n) and n >= 1_000_000_000,
+    do: "#{Float.round(n / 1_000_000_000, 2)}B"
+
+  def shares(n) when is_integer(n) and n >= 1_000_000,
+    do: "#{Float.round(n / 1_000_000, 2)}M"
+
+  def shares(n) when is_integer(n) and n >= 0,
+    do: Integer.to_string(n)
+
+  def shares(_), do: "—"
 end

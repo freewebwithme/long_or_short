@@ -273,6 +273,16 @@ defmodule LongOrShort.News.Article do
 
       prepare build(select: [:content_hash], load: [:ticker])
     end
+
+    read :by_ticker_symbol do
+      argument :symbol, :string, allow_nil?: false
+      argument :limit, :integer, default: 10
+
+      filter expr(ticker.symbol == ^arg(:symbol))
+
+      prepare build(sort: [published_at: :desc])
+      prepare build(limit: arg(:limit))
+    end
   end
 
   # ─────────────────────────────────────────────────────────────────────
