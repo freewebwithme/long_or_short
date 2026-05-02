@@ -24,7 +24,7 @@ defmodule LongOrShort.Application do
         # Start to serve requests, typically the last entry
         LongOrShortWeb.Endpoint,
         {AshAuthentication.Supervisor, [otp_app: :long_or_short]}
-      ] ++ maybe_price_stream()
+      ] ++ maybe_price_stream() ++ maybe_indices_poller()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -44,6 +44,14 @@ defmodule LongOrShort.Application do
   defp maybe_price_stream do
     if Application.get_env(:long_or_short, :enable_price_stream, true) do
       [LongOrShort.Tickers.Sources.FinnhubStream]
+    else
+      []
+    end
+  end
+
+  defp maybe_indices_poller do
+    if Application.get_env(:long_or_short, :enable_indices_poller, true) do
+      [LongOrShort.Tickers.Sources.IndicesPoller]
     else
       []
     end
