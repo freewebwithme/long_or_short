@@ -127,6 +127,10 @@ defmodule LongOrShort.News.Article do
       attribute_writable? true
       public? true
     end
+
+    has_one :momentum_analysis, LongOrShort.Analysis.MomentumAnalysis do
+      public? true
+    end
   end
 
   actions do
