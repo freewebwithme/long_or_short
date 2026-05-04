@@ -1,0 +1,366 @@
+defmodule LongOrShort.Analysis.MomentumAnalysis do
+  @moduledoc """
+  Multi-axis momentum analysis of one news article — output of
+  `LongOrShort.Analysis.MomentumAnalyzer` (LON-82). One row per article.
+
+  ## Card UX
+
+  The compact card shows six signals plus a headline takeaway, scannable in
+  under a second:
+
+    - `:catalyst_strength`, `:catalyst_type`, `:sentiment`
+    - `:pump_fade_risk`, `:strategy_match`, `:verdict`
+    - `:headline_takeaway` — one-line trader-voice summary
+
+  The expandable detail view renders five Markdown sections: `:detail_summary`,
+  `:detail_positives`, `:detail_concerns`, `:detail_checklist`,
+  `:detail_recommendation`.
+
+  See LON-78 epic for design rationale and target card layout.
+
+  ## Lifecycle
+
+  One row per article, enforced by the `:unique_article` identity on
+  `:article_id`. Use `:create` for the first analysis, `:upsert` for
+  re-analysis — the same row is overwritten and `:analyzed_at` advances.
+  Older runs are not retained as history rows. Deliberate divergence from
+  `RepetitionAnalysis`, which keeps a row per run.
+
+  ## Field categories
+
+    - **Card signals** — typed enum axes that drive the compact card
+    - **Card summary** — `:headline_takeaway`
+    - **Detail view** — five Markdown sections for the expanded view
+    - **Snapshot at analysis time** — `:price_at_analysis`,
+      `:float_shares_at_analysis`, `:rvol_at_analysis`. Frozen at create —
+      what the trader was looking at when they clicked Analyze.
+    - **Strategy-match reasoning** — `:strategy_match_reasons` JSON
+      breakdown of which rules passed/failed
+    - **LLM provenance** — `:llm_provider`, `:llm_model`, `:input_tokens`,
+      `:output_tokens` for cost tracking (LON-35 epic) and model-drift
+      detection
+
+  ## LLM fills LLM-shaped fields, code fills code-shaped fields
+
+  The LLM populates LLM-shaped fields (catalyst, sentiment, verdict, detail
+  sections, takeaway). Code-shaped fields are Phase 1 stubs:
+
+    - `:pump_fade_risk` defaults to `:insufficient_data` — Phase 4 fills it
+      from a `price_reactions` history table.
+    - `:strategy_match` defaults to `:partial` — Phase 2 fills it from
+      deterministic rules over price, float, and RVOL.
+
+  Asking the LLM to guess these from a headline alone produces hallucination,
+  so they stay stubbed until real signal sources land.
+
+  ## Policies
+
+  SystemActor (`:system?` true) and admins bypass all checks. Authenticated
+  trader users can read but not write — writes happen via `MomentumAnalyzer`
+  running as `SystemActor`. LON-15 will replace this bypass pattern.
+  """
+
+  use Ash.Resource,
+    otp_app: :long_or_short,
+    domain: LongOrShort.Analysis,
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
+
+  postgres do
+    table "momentum_analyses"
+    repo LongOrShort.Repo
+
+    references do
+      reference :article, on_delete: :restrict, on_update: :update
+    end
+  end
+
+  identities do
+    identity :unique_article, [:article_id]
+  end
+
+  attributes do
+    uuid_v7_primary_key :id
+    create_timestamp :created_at
+    update_timestamp :updated_at
+
+    attribute :analyzed_at, :utc_datetime_usec do
+      allow_nil? false
+      public? true
+      description "Wall-clock time the analysis was produced; set by action."
+    end
+
+    # ── Card-level signals ──────────────────────────────────────────
+    attribute :catalyst_strength, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:strong, :medium, :weak, :unknown]
+      description "How strong the catalyst is as a momentum trigger."
+    end
+
+    attribute :catalyst_type, :atom do
+      allow_nil? false
+      public? true
+
+      constraints one_of: [
+                    :partnership,
+                    :ma,
+                    :fda,
+                    :earnings,
+                    :offering,
+                    :rfp,
+                    :contract_win,
+                    :guidance,
+                    :clinical,
+                    :regulatory,
+                    :other
+                  ]
+
+      description "Kind of news event (partnership, M&A, FDA, earnings, …)."
+    end
+
+    attribute :sentiment, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:positive, :neutral, :negative]
+      description "Directional bias of the news itself."
+    end
+
+    attribute :pump_fade_risk, :atom do
+      allow_nil? false
+      public? true
+      default :insufficient_data
+      constraints one_of: [:high, :medium, :low, :insufficient_data]
+
+      description """
+      Likelihood of a post-spike fade. Phase 1 stub — defaults to
+      `:insufficient_data`. Phase 4 will fill the real value from a
+      price-reaction history table.
+      """
+    end
+
+    attribute :repetition_count, :integer do
+      allow_nil? false
+      public? true
+      default 1
+      description "Nth occurrence of this theme (this article counted)."
+    end
+
+    attribute :repetition_summary, :string do
+      public? true
+
+      description ~s(Short label for the repetition cluster, e.g. "Aero Velocity 파트너십 4번째".)
+    end
+
+    attribute :strategy_match, :atom do
+      allow_nil? false
+      public? true
+      default :partial
+      constraints one_of: [:match, :partial, :skip]
+
+      description """
+      Fit with the user's small-cap momentum strategy. Phase 1 stub —
+      defaults to `:partial`. Phase 2 will fill the real value from
+      rule-based signals on price, float, and RVOL.
+      """
+    end
+
+    attribute :verdict, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:trade, :watch, :skip]
+
+      description """
+      Trader-facing call: `:trade` (take it), `:watch` (monitor),
+      `:skip` (pass).
+      """
+    end
+
+    # ── Card summary ────────────────────────────────────────────────
+    attribute :headline_takeaway, :string do
+      allow_nil? false
+      public? true
+      description "One-line trader-voice summary shown on the feed card."
+    end
+
+    # ── Detail view (Markdown) ──────────────────────────────────────
+    attribute :detail_summary, :string do
+      public? true
+      description "Detail section: what the news actually says."
+    end
+
+    attribute :detail_positives, :string do
+      public? true
+      description "Detail section: bullish reading and momentum factors."
+    end
+
+    attribute :detail_concerns, :string do
+      public? true
+      description "Detail section: bearish reading and fade risks."
+    end
+
+    attribute :detail_checklist, :string do
+      public? true
+
+      description """
+      Detail section: pre-entry checks (price band, float, RVOL,
+      EMA alignment).
+      """
+    end
+
+    attribute :detail_recommendation, :string do
+      public? true
+      description "Detail section: concrete suggested action with reasoning."
+    end
+
+    # ── Snapshot at analysis time (frozen — never updated after creation) ──
+    attribute :price_at_analysis, :decimal do
+      public? true
+      description "`Ticker.last_price` at the moment Analyze was clicked."
+    end
+
+    attribute :float_shares_at_analysis, :integer do
+      public? true
+      description "`Ticker.float_shares` snapshot at analysis time."
+    end
+
+    attribute :rvol_at_analysis, :float do
+      public? true
+      description "Relative volume snapshot at analysis time."
+    end
+
+    attribute :strategy_match_reasons, :map do
+      public? true
+
+      description """
+      JSON describing which strategy rules passed/failed, e.g.
+      `%{"price_in_range" => true, "float_under_50m" => false}`.
+      Phase 1 leaves `%{}` since `:strategy_match` is stubbed.
+      """
+    end
+
+    # ── LLM provenance ──────────────────────────────────────────────
+    attribute :llm_provider, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:claude, :mock, :other]
+      description "Which provider produced this analysis."
+    end
+
+    attribute :llm_model, :string do
+      allow_nil? false
+      public? true
+      description ~s(Provider model id, e.g. "claude-opus-4-7".)
+    end
+
+    attribute :input_tokens, :integer do
+      public? true
+      description "Input token count — cost tracking (LON-35 epic)."
+    end
+
+    attribute :output_tokens, :integer do
+      public? true
+      description "Output token count — cost tracking."
+    end
+  end
+
+  relationships do
+    belongs_to :article, LongOrShort.News.Article do
+      allow_nil? false
+      attribute_writable? true
+      public? true
+    end
+  end
+
+  @fields [
+    :article_id,
+    :catalyst_strength,
+    :catalyst_type,
+    :sentiment,
+    :pump_fade_risk,
+    :repetition_count,
+    :repetition_summary,
+    :strategy_match,
+    :verdict,
+    :headline_takeaway,
+    :detail_summary,
+    :detail_positives,
+    :detail_concerns,
+    :detail_checklist,
+    :detail_recommendation,
+    :price_at_analysis,
+    :float_shares_at_analysis,
+    :rvol_at_analysis,
+    :strategy_match_reasons,
+    :llm_provider,
+    :llm_model,
+    :input_tokens,
+    :output_tokens
+  ]
+  actions do
+    defaults [:read, :destroy]
+
+    create :create do
+      primary? true
+
+      accept @fields
+
+      change set_attribute(:analyzed_at, &DateTime.utc_now/0)
+    end
+
+    create :upsert do
+      upsert? true
+      upsert_identity :unique_article
+
+      accept @fields
+
+      upsert_fields [
+        :catalyst_strength,
+        :catalyst_type,
+        :sentiment,
+        :pump_fade_risk,
+        :repetition_count,
+        :repetition_summary,
+        :strategy_match,
+        :verdict,
+        :headline_takeaway,
+        :detail_summary,
+        :detail_positives,
+        :detail_concerns,
+        :detail_checklist,
+        :detail_recommendation,
+        :price_at_analysis,
+        :float_shares_at_analysis,
+        :rvol_at_analysis,
+        :strategy_match_reasons,
+        :llm_provider,
+        :llm_model,
+        :input_tokens,
+        :output_tokens,
+        :analyzed_at
+      ]
+
+      change set_attribute(:analyzed_at, &DateTime.utc_now/0)
+    end
+
+    read :get_by_article do
+      get? true
+      argument :article_id, :uuid, allow_nil?: false
+      filter expr(article_id == ^arg(:article_id))
+    end
+  end
+
+  policies do
+    bypass actor_attribute_equals(:system?, true) do
+      authorize_if always()
+    end
+
+    bypass actor_attribute_equals(:role, :admin) do
+      authorize_if always()
+    end
+
+    policy action_type(:read) do
+      authorize_if actor_present()
+    end
+  end
+end
