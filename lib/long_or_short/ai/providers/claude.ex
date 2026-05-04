@@ -17,6 +17,14 @@ defmodule LongOrShort.AI.Providers.Claude do
       # config/runtime.exs (existing)
       config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string, nil)
 
+  ## Message normalization
+
+    Anthropic's Messages API does not accept `role: "system"` inside the
+    `messages` list — system content goes as a top-level `system` parameter.
+    This module extracts any system messages from the list, joins their
+    content with `\n\n`, and routes them to the right place. Callers can
+    pass system messages freely without thinking about provider quirks.
+
   ## Errors
 
   All errors are returned as `{:error, reason}`. Retries / backoff are
@@ -87,14 +95,37 @@ defmodule LongOrShort.AI.Providers.Claude do
 
   defp build_body(messages, tools, opts) do
     config = config()
+    {system, chat_messages} = extract_system(messages)
 
-    %{
+    base = %{
       model: Keyword.get(opts, :model) || Keyword.fetch!(config, :model),
       max_tokens: Keyword.get(opts, :max_tokens) || Keyword.fetch!(config, :max_tokens),
-      messages: messages,
+      messages: chat_messages,
       tools: tools,
       tool_choice: Keyword.get(opts, :tool_choice, %{type: "auto"})
     }
+
+    case system do
+      nil -> base
+      text -> Map.put(base, :system, text)
+    end
+  end
+
+  # Anthropic's Messages API rejects role:"system" inside the messages list —
+  # system content goes as a top-level `system` parameter. Other providers
+  # (OpenAI) accept system inside messages. Normalizing here keeps the
+  # `LongOrShort.AI.Provider.message/0` contract uniform across providers:
+  # callers freely pass system messages and we route them correctly.
+  defp extract_system(messages) do
+    {systems, chat} = Enum.split_with(messages, fn %{role: role} -> role == "system" end)
+
+    system_text =
+      case systems do
+        [] -> nil
+        msgs -> msgs |> Enum.map(& &1.content) |> Enum.join("\n\n")
+      end
+
+    {system_text, chat}
   end
 
   # ─── Response handling ────────────────────────────────────────────
