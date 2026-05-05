@@ -255,6 +255,97 @@ defmodule LongOrShort.News.ArticleTest do
     end
   end
 
+  describe "create_manual_article/2" do
+    test "creates an article and resolves a new ticker by symbol" do
+      assert {:error, _} = Tickers.get_ticker_by_symbol("MANNEW", authorize?: false)
+
+      {:ok, article} =
+        News.create_manual_article(
+          valid_manual_article_attrs(%{symbol: "MANNEW"}),
+          authorize?: false
+        )
+
+      {:ok, ticker} = Tickers.get_ticker_by_symbol("MANNEW", authorize?: false)
+      assert article.ticker_id == ticker.id
+      assert article.source == :benzinga
+    end
+
+    test "reuses an existing ticker when symbol matches" do
+      existing = build_ticker(%{symbol: "MANEXIST"})
+
+      {:ok, article} =
+        News.create_manual_article(
+          valid_manual_article_attrs(%{symbol: "MANEXIST"}),
+          authorize?: false
+        )
+
+      assert article.ticker_id == existing.id
+    end
+
+    test "auto-generates external_id prefixed with 'manual:'" do
+      {:ok, article} =
+        News.create_manual_article(
+          valid_manual_article_attrs(%{symbol: "MANEXT"}),
+          authorize?: false
+        )
+
+      assert String.starts_with?(article.external_id, "manual:")
+      # Ecto.UUID is 36 chars; with "manual:" prefix = 43.
+      assert String.length(article.external_id) == 43
+    end
+
+    test "two pastes of identical content produce two separate rows" do
+      attrs = valid_manual_article_attrs(%{symbol: "MANDUP"})
+
+      {:ok, first} = News.create_manual_article(attrs, authorize?: false)
+      {:ok, second} = News.create_manual_article(attrs, authorize?: false)
+
+      refute first.id == second.id
+      refute first.external_id == second.external_id
+      # Same title+summary → same content_hash, even though rows differ.
+      assert first.content_hash == second.content_hash
+    end
+
+    test "computes content_hash from title + summary" do
+      {:ok, article} =
+        News.create_manual_article(
+          valid_manual_article_attrs(%{
+            symbol: "MANHASH",
+            title: "Apple beats earnings",
+            summary: "Q3 results exceed expectations."
+          }),
+          authorize?: false
+        )
+
+      assert is_binary(article.content_hash)
+      assert String.length(article.content_hash) == 64
+    end
+
+    test "defaults sentiment to :unknown" do
+      {:ok, article} =
+        News.create_manual_article(
+          valid_manual_article_attrs(%{symbol: "MANSENT"}),
+          authorize?: false
+        )
+
+      assert article.sentiment == :unknown
+    end
+
+    test "requires symbol, source, title, published_at" do
+      base = valid_manual_article_attrs(%{symbol: "MANREQ"})
+
+      for field <- [:symbol, :source, :title, :published_at] do
+        attrs = Map.delete(base, field)
+
+        assert {:error, %Ash.Error.Invalid{} = error} =
+                 News.create_manual_article(attrs, authorize?: false),
+               "expected error when missing #{field}"
+
+        assert error_on_field?(error, field)
+      end
+    end
+  end
+
   describe "uniqueness" do
     test "create_article rejects duplicate (source, external_id, ticker_id)" do
       ticker = build_ticker(%{symbol: "DUP"})
@@ -511,6 +602,24 @@ defmodule LongOrShort.News.ArticleTest do
       assert {:error, %Ash.Error.Forbidden{}} =
                News.ingest_article(
                  valid_article_attrs(%{symbol: "NILING"}),
+                 actor: nil
+               )
+    end
+
+    test "trader can create_manual" do
+      trader = build_trader_user()
+
+      assert {:ok, _} =
+               News.create_manual_article(
+                 valid_manual_article_attrs(%{symbol: "TRDMAN"}),
+                 actor: trader
+               )
+    end
+
+    test "nil actor cannot create_manual" do
+      assert {:error, %Ash.Error.Forbidden{}} =
+               News.create_manual_article(
+                 valid_manual_article_attrs(%{symbol: "NILMAN"}),
                  actor: nil
                )
     end

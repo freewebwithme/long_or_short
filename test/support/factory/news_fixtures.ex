@@ -50,6 +50,28 @@ defmodule LongOrShort.NewsFixtures do
   end
 
   @doc """
+  Returns a map of valid attributes for the :create_manual action.
+  Notably omits `external_id` (the action generates one) and
+  `sentiment` (not accepted — manual paste defaults to :unknown).
+  """
+  def valid_manual_article_attrs(overrides \\ %{}) do
+    unique = System.unique_integer([:positive])
+
+    Map.merge(
+      %{
+        symbol: "MAN#{unique}",
+        source: :benzinga,
+        title: "Manual Headline #{unique}",
+        summary: "Pasted body text.",
+        url: "https://example.com/manual/#{unique}",
+        raw_category: "General",
+        published_at: DateTime.utc_now()
+      },
+      overrides
+    )
+  end
+
+  @doc """
   Creates an Article for an existing Ticker via the :create action
   (no ticker resolution). Useful for tests that have already set up
   a Ticker and want to attach articles to it.

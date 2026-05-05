@@ -218,6 +218,57 @@ defmodule LongOrShort.News.Article do
       change ComputeContentHash
     end
 
+    # Manual paste path used by /analyze (LON-85). Different shape from
+    # :ingest: no real external_id (we generate one), no source-classified
+    # sentiment (defaults to :unknown), and the caller selects the ticker
+    # by symbol via the LiveView form rather than via a feeder payload.
+    create :create_manual do
+      description """
+      Create an article from manually-pasted text. Generates a synthetic
+      `external_id` so the `(source, external_id, ticker_id)` identity
+      stays satisfied. Two pastes of identical content produce two
+      separate rows — Phase 1 accepts this; deduplication via
+      `content_hash` is a Phase 2 concern.
+      """
+
+      accept [
+        :source,
+        :title,
+        :summary,
+        :url,
+        :raw_category,
+        :published_at
+      ]
+
+      argument :symbol, :string do
+        allow_nil? false
+        description "Ticker symbol. Ticker is created if it doesn't exist."
+      end
+
+      # authorize?: false on the inner Ticker upsert. Ticker policies only
+      # allow system/admin to write, but a trader who passed Article's own
+      # :create_manual policy gate is implicitly authorized to materialize
+      # the ticker for the symbol they pasted. Auth check stays at the
+      # Article boundary; no need to widen Ticker's surface.
+      change manage_relationship(:symbol, :ticker,
+               value_is_key: :symbol,
+               on_lookup: :relate,
+               on_no_match: {:create, :upsert_by_symbol},
+               use_identities: [:unique_symbol],
+               authorize?: false
+             )
+
+      change fn changeset, _context ->
+        Ash.Changeset.force_change_attribute(
+          changeset,
+          :external_id,
+          "manual:" <> Ecto.UUID.generate()
+        )
+      end
+
+      change ComputeContentHash
+    end
+
     read :by_ticker do
       argument :ticker_id, :uuid, allow_nil?: false
 
@@ -304,6 +355,13 @@ defmodule LongOrShort.News.Article do
 
     policy action_type(:read) do
       authorize_if actor_present()
+    end
+
+    # Manual paste is the trader's own action — distinct from the feeder
+    # `:ingest` path which traders cannot invoke.
+    policy action(:create_manual) do
+      authorize_if actor_attribute_equals(:role, :trader)
+      authorize_if actor_attribute_equals(:role, :admin)
     end
   end
 end
