@@ -91,9 +91,7 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
         Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
       end)
 
-      Claude.call(@messages, @tools,
-        tool_choice: %{type: "tool", name: "record_news_analysis"}
-      )
+      Claude.call(@messages, @tools, tool_choice: %{type: "tool", name: "record_news_analysis"})
     end
   end
 

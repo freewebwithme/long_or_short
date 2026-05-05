@@ -39,7 +39,8 @@ defmodule LongOrShort.Repo.Migrations.AddRepetitionAnalyses do
             prefix: "public",
             on_delete: :restrict,
             on_update: :update_all
-          ), null: false
+          ),
+          null: false
     end
 
     create index(:repetition_analysis, [:article_id, :status])

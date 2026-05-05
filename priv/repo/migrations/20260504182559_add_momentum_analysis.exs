@@ -51,7 +51,8 @@ defmodule LongOrShort.Repo.Migrations.AddMomentumAnalysis do
             prefix: "public",
             on_delete: :restrict,
             on_update: :update_all
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:momentum_analyses, [:article_id],
