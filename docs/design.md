@@ -132,3 +132,138 @@ This document captures the *why* behind significant choices. New decisions shoul
 - We already plan a `LongOrShort.AI.Provider` behaviour (LON-23). That's our abstraction; an SDK underneath would just be a wrapper-of-a-wrapper.
 
 **Implication**: Each new Anthropic feature we adopt (caching, batching, etc.) is a deliberate code change in our provider, not a dependency upgrade.
+
+---
+
+## 2026-04 — Anthropic Tool Use over JSON-mode parsing (LON-24, LON-26)
+
+**Decision**: The Claude provider drives structured output via Anthropic's Tool Use feature, not by asking the model to emit JSON in the message body and parsing it.
+
+**Rationale**:
+- Tool Use enforces the input schema at the API level. Wrong types or missing required fields fail at the provider, not in our deserializer.
+- Enums are validated twice — once by the tool schema, once by our `to_enum_atom/3` mapper using `String.to_existing_atom/1`. Anything off the allowed list fails fast with a clear `{:invalid_enum, field, value}` error instead of an opaque cast failure later.
+- Our prompts include an explicit closing instruction ("Always respond by calling the `record_news_analysis` tool. Do not respond in plain text."), so a missing tool call is a real anomaly and triggers `{:error, :no_tool_call}` rather than silent text-only output.
+
+**Trade-off**: Anthropic-specific. A future provider (OpenAI, local Llama, etc.) needs an equivalent function-calling shape, or a parallel tool-call adapter. The provider behaviour's `tool_call` type is generic enough to absorb that.
+
+---
+
+## 2026-04 — File-backed watchlist over config or DB (LON-64)
+
+**Decision**: The single source of truth for "which symbols do we care about" is `priv/watchlist.txt` — one symbol per line, `#` comments allowed. A pure module (`Tickers.Watchlist`) reads it on demand.
+
+**Rationale**:
+- The earlier `:finnhub_watch_symbols` config approach required a code release to add a symbol — friction during MVP exploration.
+- A DB-backed `Watchlist` resource (LON-36) would solve that, but it pulls in a settings UI, multi-user scoping, and authorization questions. Premature for solo use.
+- A file in `priv/` is editable from any text editor, survives restarts, deployable as a config artifact, and lets every consumer (`FinnhubStream`, `IndicesPoller`, `FinnhubProfileSync`, `DashboardLive`) call `Watchlist.symbols/0` without coordinating reads.
+- Tests override via `:watchlist_override` env (list of symbols).
+
+**Migration path**: When LON-36 lands, swap the body of `Watchlist.symbols/0` to read from the DB resource — no callers change.
+
+---
+
+## 2026-04 — Live last_price via Finnhub WebSocket trade ticks (LON-60)
+
+**Decision**: A dedicated `Tickers.Sources.FinnhubStream` GenServer holds a WebSocket connection to Finnhub's trade-tick feed, subscribes to every watchlist symbol, and per tick (a) updates `Ticker.last_price` via `:update_ticker_price`, (b) broadcasts `{:price_tick, symbol, %Decimal{}}` on the `"prices"` topic.
+
+**Rationale**:
+- Polling `/quote` for every ticker every few seconds quickly exceeds Finnhub's 60 req/min budget once the watchlist grows.
+- `Ticker.last_price` doubles as a queryable field for filters (`/feed` price filter) and the live display value, so writing it from one place avoids divergence.
+- A separate process keeps the WebSocket lifecycle (reconnect, backoff, key-rotation) isolated from the rest of the supervision tree.
+
+**Trade-off**: Free-tier limit is 50 subscriptions; a larger watchlist needs sharding or paid tier. Acceptable for MVP.
+
+**Toggle**: `:enable_price_stream` (default `true`) gates the child in `application.ex` — disabled in tests and dev environments without API keys.
+
+---
+
+## 2026-04 — Daily Finnhub profile2 enrichment via Oban Cron (LON-59)
+
+**Decision**: A daily Oban Cron job (`Tickers.Workers.FinnhubProfileSync`, 05:00 UTC) calls Finnhub `/stock/profile2` for each watchlist symbol and upserts the master fields (`company_name`, `exchange`, `industry`, `shares_outstanding`, `float_shares`).
+
+**Rationale**:
+- These fields change rarely (corporate action cadence — IPOs, splits, listings). A daily refresh is enough.
+- Per-symbol 1.2-second pause keeps us inside the 60 req/min budget without dipping into the live ticker stream's allowance.
+- Oban gives us per-job logs in the DB, automatic retry on transient errors, and a UI (`/oban` in dev) to see history.
+
+**Trade-off**: First boot of a new symbol shows incomplete master data until the next 05:00 UTC run. Acceptable for MVP — the analyzer falls back to whatever is present.
+
+**Float-shares accuracy caveat**: Finnhub's `shareOutstanding` is total shares, not free float. We currently store it into `:float_shares` as a proxy. LON-68 tracks the migration to a real free-float source (FMP).
+
+---
+
+## 2026-05 — CIK sync moved from boot Task to Oban Cron (LON-57)
+
+**Decision**: SEC's `company_tickers.json` import (10K+ rows into `Ticker.cik`) runs as `Sec.CikSyncWorker` on Oban Cron (04:00 UTC daily, max 3 retries) instead of as a fire-and-forget `Task` from the application supervisor.
+
+**Rationale**:
+- The boot-time `Task` punished local restarts with a multi-second download + DB churn. Worse, transient SEC outages on boot meant CIK mapping was simply absent until the next deploy — no retry, no visibility.
+- Oban gives us idempotent retry, per-run history queryable via `oban_jobs`, and a clean separation between "the app is running" and "the daily data refresh ran."
+- 04:00 UTC keeps the heavier job ahead of the lighter Finnhub profile sync at 05:00 UTC.
+
+**Trade-off**: First-time setup needs to either let the cron run once or invoke `Sec.CikMapper.sync()` manually in IEx. Acceptable — bootstrap is rare.
+
+---
+
+## 2026-05 — Phoenix scaffold strip + dashboard-first foundation (LON-70, LON-72)
+
+**Decision**: Replace the generated Phoenix `PageController` and welcome page with a custom `DashboardLive` at `/`, behind authentication. Build a design-token shell (Tailwind + daisyUI) before adding feature widgets.
+
+**Rationale**:
+- Every authenticated user lands on something useful (live indices, watchlist, news) instead of the Phoenix splash page.
+- Establishing nav, header, theme toggle, and design tokens up front means the subsequent widget tickets (LON-73 through LON-77) only add content — no styling drift between widgets.
+- LiveView session is now scoped via `ash_authentication_live_session :authenticated_routes` with on-mount hooks for auth + current-path tracking.
+
+**Trade-off**: A design system commitment. Theme choices (color tokens, daisyUI theme) are locked in early. Acceptable — switching later is a CSS pass, not a structural change.
+
+---
+
+## 2026-05 — Per-user prompt personalization via TradingProfile (LON-88)
+
+**Decision**: The system prompt for `NewsAnalyzer` is built from a per-user `TradingProfile` (in the `Accounts` domain) — not hardcoded for "small-cap momentum day trader." The profile drives persona branching across five trading styles.
+
+**Rationale**:
+- LON-88 market research showed that on news-active retail platforms (Stocktwits-style), day traders are ~15%, swing 29%, long-term 48%. Hardcoding the small-cap scalper persona would alienate the larger audience the moment the app went past solo use.
+- A `:trading_style` enum (`:momentum_day | :large_cap_day | :swing | :position | :options`) lets the prompt builder select the right behavioral guidance (scalp/fade vs continuation vs IV implications, etc.).
+- Style-specific fields (`:price_min/max`, `:float_max`) are nullable. The prompt renders only what's present, so each style sees a focused profile instead of a one-size-fits-all questionnaire.
+- Catalyst preferences are first-class — the LLM is told which catalyst types this trader cares about and frames its `:verdict` accordingly.
+
+**Trade-off**: One profile per user, enforced by `:unique_user`. Multi-strategy traders (someone who day trades small-caps Mon-Tue and swings large-caps Wed-Fri) need to pick a primary. Acceptable for MVP — a `MomentumStrategyConfig`-style child resource is the planned escape hatch.
+
+**Policy deviation**: Traders can write their own profile (it's user-owned config). Other Analysis-domain resources are SystemActor-write only. Documented in `TradingProfile` moduledoc.
+
+---
+
+## 2026-05 — RepetitionAnalysis pivot to NewsAnalysis (LON-78 epic, LON-79/80/81/82/89)
+
+**Decision**: Retire the original `RepetitionAnalysis` resource + `RepetitionAnalyzer` module (LON-22 epic) and replace them with a single richer `NewsAnalysis` resource + `NewsAnalyzer` orchestrator. One row per article, upsert-over (no history rows).
+
+**Rationale**:
+- Repetition counting alone produced cards that were "correct but boring" — the trader still had to read the article to decide. Useful as a signal, insufficient as a verdict.
+- Separating repetition from sentiment, catalyst type, and verdict into four sibling resources would have multiplied query joins for every card render. One row per article serves the hot path directly.
+- Upsert-over (no history) is intentional. We're optimizing for "show the latest analysis" not "audit the model's evolution." If we need history later, a separate `news_analysis_history` table can be added without changing the read path.
+- The pivot also reframed the analyzer as **synchronous + user-triggered**, not an async PubSub-driven worker. A trader clicks Analyze, awaits a few seconds, sees the result inline — no background fan-out, no batch invalidation, no "analysis pending" intermediate states.
+
+**Migration sequence**:
+- LON-79: build new `MomentumAnalysis` Ash resource alongside the old one
+- LON-81: tool spec + prompt builder
+- LON-82: business logic
+- LON-89: rename `MomentumAnalysis` → `NewsAnalysis` (broader naming for non-momentum styles enabled by LON-88)
+- LON-80: retire `RepetitionAnalysis` + `RepetitionAnalyzer`
+
+**Trade-off**: No history of past LLM outputs per article. If we want to A/B prompts or detect model drift, we need to add a separate audit table. Deferred — `:llm_provider`, `:llm_model`, `:input_tokens`, `:output_tokens` give us enough to spot drift via aggregate queries.
+
+---
+
+## 2026-05 — Phase 1 stubs for `:pump_fade_risk` and `:strategy_match`
+
+**Decision**: The analyzer writes `:pump_fade_risk = :insufficient_data` and `:strategy_match = :partial` explicitly on every row. The tool schema **does not expose** these fields to the LLM at all.
+
+**Rationale**:
+- Asking the LLM to guess pump/fade risk from a headline alone produces hallucinated confidence. The real signal lives in a future `price_reactions` history table (Phase 4).
+- `:strategy_match` belongs to deterministic rules over price band, float, and RVOL (Phase 2) — not LLM judgment.
+- Writing the stubs explicitly (not relying on Ash `default`s) is defense in depth: even if a future change adds these fields to the tool schema by mistake, the analyzer still overwrites them with the stub value until the real implementation lands.
+- The card UI still has to render these fields. Visual treatment for `:insufficient_data` and `:partial` is part of the card design, not a "missing data" state.
+
+**Trade-off**: Two card slots show placeholder values until Phase 2/4 land. Acceptable — better an honest stub than a fake confidence reading.
+
