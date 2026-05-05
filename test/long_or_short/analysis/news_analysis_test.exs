@@ -1,17 +1,17 @@
-defmodule LongOrShort.Analysis.MomentumAnalysisTest do
+defmodule LongOrShort.Analysis.NewsAnalysisTest do
   use LongOrShort.DataCase, async: true
 
   import LongOrShort.{AnalysisFixtures, NewsFixtures, AccountsFixtures}
 
   alias LongOrShort.{Analysis, News}
 
-  describe "create_momentum_analysis/2" do
+  describe "create_news_analysis/2" do
     test "creates a row with valid attrs and sets analyzed_at" do
       article = build_article()
-      attrs = valid_momentum_analysis_attrs(%{article_id: article.id})
+      attrs = valid_news_analysis_attrs(%{article_id: article.id})
 
       {:ok, analysis} =
-        Analysis.create_momentum_analysis(attrs, authorize?: false)
+        Analysis.create_news_analysis(attrs, authorize?: false)
 
       assert analysis.article_id == article.id
       assert analysis.verdict == :trade
@@ -23,11 +23,11 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       article = build_article()
 
       attrs =
-        valid_momentum_analysis_attrs(%{article_id: article.id})
+        valid_news_analysis_attrs(%{article_id: article.id})
         |> Map.drop([:pump_fade_risk, :strategy_match, :repetition_count])
 
       {:ok, analysis} =
-        Analysis.create_momentum_analysis(attrs, authorize?: false)
+        Analysis.create_news_analysis(attrs, authorize?: false)
 
       assert analysis.pump_fade_risk == :insufficient_data
       assert analysis.strategy_match == :partial
@@ -36,10 +36,10 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
 
     test "rejects invalid :verdict" do
       article = build_article()
-      attrs = valid_momentum_analysis_attrs(%{article_id: article.id, verdict: :bogus})
+      attrs = valid_news_analysis_attrs(%{article_id: article.id, verdict: :bogus})
 
       assert {:error, %Ash.Error.Invalid{} = error} =
-               Analysis.create_momentum_analysis(attrs, authorize?: false)
+               Analysis.create_news_analysis(attrs, authorize?: false)
 
       assert error_on_field?(error, :verdict)
     end
@@ -48,11 +48,11 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       article = build_article()
 
       attrs =
-        valid_momentum_analysis_attrs(%{article_id: article.id})
+        valid_news_analysis_attrs(%{article_id: article.id})
         |> Map.delete(:headline_takeaway)
 
       assert {:error, %Ash.Error.Invalid{} = error} =
-               Analysis.create_momentum_analysis(attrs, authorize?: false)
+               Analysis.create_news_analysis(attrs, authorize?: false)
 
       assert error_on_field?(error, :headline_takeaway)
     end
@@ -61,28 +61,28 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
   describe "unique_article identity" do
     test "second :create with same article_id is rejected" do
       article = build_article()
-      _first = build_momentum_analysis(%{article_id: article.id})
+      _first = build_news_analysis(%{article_id: article.id})
 
-      attrs = valid_momentum_analysis_attrs(%{article_id: article.id})
+      attrs = valid_news_analysis_attrs(%{article_id: article.id})
 
       assert {:error, %Ash.Error.Invalid{}} =
-               Analysis.create_momentum_analysis(attrs, authorize?: false)
+               Analysis.create_news_analysis(attrs, authorize?: false)
     end
   end
 
-  describe "upsert_momentum_analysis/2" do
+  describe "upsert_news_analysis/2" do
     test "first call inserts, second call with same article_id updates the same row" do
       article = build_article()
 
       {:ok, first} =
-        Analysis.upsert_momentum_analysis(
-          valid_momentum_analysis_attrs(%{article_id: article.id, verdict: :watch}),
+        Analysis.upsert_news_analysis(
+          valid_news_analysis_attrs(%{article_id: article.id, verdict: :watch}),
           authorize?: false
         )
 
       {:ok, second} =
-        Analysis.upsert_momentum_analysis(
-          valid_momentum_analysis_attrs(%{
+        Analysis.upsert_news_analysis(
+          valid_news_analysis_attrs(%{
             article_id: article.id,
             verdict: :trade,
             headline_takeaway: "Updated takeaway"
@@ -99,14 +99,14 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       article = build_article()
 
       {:ok, first} =
-        Analysis.upsert_momentum_analysis(
-          valid_momentum_analysis_attrs(%{article_id: article.id}),
+        Analysis.upsert_news_analysis(
+          valid_news_analysis_attrs(%{article_id: article.id}),
           authorize?: false
         )
 
       {:ok, second} =
-        Analysis.upsert_momentum_analysis(
-          valid_momentum_analysis_attrs(%{article_id: article.id}),
+        Analysis.upsert_news_analysis(
+          valid_news_analysis_attrs(%{article_id: article.id}),
           authorize?: false
         )
 
@@ -114,13 +114,13 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
     end
   end
 
-  describe "get_momentum_analysis_by_article/2" do
+  describe "get_news_analysis_by_article/2" do
     test "returns the analysis for the given article" do
       article = build_article()
-      analysis = build_momentum_analysis(%{article_id: article.id})
+      analysis = build_news_analysis(%{article_id: article.id})
 
       {:ok, found} =
-        Analysis.get_momentum_analysis_by_article(article.id, authorize?: false)
+        Analysis.get_news_analysis_by_article(article.id, authorize?: false)
 
       assert found.id == analysis.id
     end
@@ -129,33 +129,33 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       article = build_article()
 
       assert {:ok, nil} =
-               Analysis.get_momentum_analysis_by_article(article.id, authorize?: false)
+               Analysis.get_news_analysis_by_article(article.id, authorize?: false)
     end
   end
 
-  describe "Article.momentum_analysis (has_one)" do
+  describe "Article.news_analysis (has_one)" do
     test "loads when present" do
       article = build_article()
-      analysis = build_momentum_analysis(%{article_id: article.id})
+      analysis = build_news_analysis(%{article_id: article.id})
 
       {:ok, loaded} =
-        News.get_article(article.id, load: [:momentum_analysis], authorize?: false)
+        News.get_article(article.id, load: [:news_analysis], authorize?: false)
 
-      assert loaded.momentum_analysis.id == analysis.id
+      assert loaded.news_analysis.id == analysis.id
     end
 
     test "loads as nil when absent" do
       article = build_article()
 
       {:ok, loaded} =
-        News.get_article(article.id, load: [:momentum_analysis], authorize?: false)
+        News.get_article(article.id, load: [:news_analysis], authorize?: false)
 
-      assert is_nil(loaded.momentum_analysis)
+      assert is_nil(loaded.news_analysis)
     end
 
     test "blocks article deletion when analysis references it (on_delete: :restrict)" do
       article = build_article()
-      _analysis = build_momentum_analysis(%{article_id: article.id})
+      _analysis = build_news_analysis(%{article_id: article.id})
 
       assert {:error, _} = News.destroy_article(article, authorize?: false)
     end
@@ -164,7 +164,7 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
   describe "policies" do
     setup do
       article = build_article()
-      analysis = build_momentum_analysis(%{article_id: article.id})
+      analysis = build_news_analysis(%{article_id: article.id})
       {:ok, article: article, analysis: analysis}
     end
 
@@ -172,8 +172,8 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       other = build_article()
 
       assert {:ok, _} =
-               Analysis.create_momentum_analysis(
-                 valid_momentum_analysis_attrs(%{article_id: other.id}),
+               Analysis.create_news_analysis(
+                 valid_news_analysis_attrs(%{article_id: other.id}),
                  actor: LongOrShort.Accounts.SystemActor.new()
                )
     end
@@ -183,8 +183,8 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       other = build_article()
 
       assert {:ok, _} =
-               Analysis.create_momentum_analysis(
-                 valid_momentum_analysis_attrs(%{article_id: other.id}),
+               Analysis.create_news_analysis(
+                 valid_news_analysis_attrs(%{article_id: other.id}),
                  actor: admin
                )
     end
@@ -193,7 +193,7 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       trader = build_trader_user()
 
       {:ok, found} =
-        Analysis.get_momentum_analysis(analysis.id, actor: trader)
+        Analysis.get_news_analysis(analysis.id, actor: trader)
 
       assert found.id == analysis.id
     end
@@ -203,15 +203,15 @@ defmodule LongOrShort.Analysis.MomentumAnalysisTest do
       other = build_article()
 
       assert {:error, %Ash.Error.Forbidden{}} =
-               Analysis.create_momentum_analysis(
-                 valid_momentum_analysis_attrs(%{article_id: other.id}),
+               Analysis.create_news_analysis(
+                 valid_news_analysis_attrs(%{article_id: other.id}),
                  actor: trader
                )
     end
 
     test "nil actor sees nil read", %{article: article} do
       assert {:ok, nil} =
-               Analysis.get_momentum_analysis_by_article(article.id, actor: nil)
+               Analysis.get_news_analysis_by_article(article.id, actor: nil)
     end
   end
 end

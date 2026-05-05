@@ -1,4 +1,4 @@
-defmodule LongOrShort.Analysis.MomentumAnalysis do
+defmodule LongOrShort.Analysis.NewsAnalysis do
   @moduledoc """
   Multi-axis momentum analysis of one news article — output of
   `LongOrShort.Analysis.MomentumAnalyzer` (LON-82). One row per article.
@@ -67,7 +67,7 @@ defmodule LongOrShort.Analysis.MomentumAnalysis do
     authorizers: [Ash.Policy.Authorizer]
 
   postgres do
-    table "momentum_analyses"
+    table "news_analyses"
     repo LongOrShort.Repo
 
     references do

@@ -33,18 +33,18 @@ defmodule LongOrShort.Analysis do
         not_found_error?: false
     end
 
-    resource LongOrShort.Analysis.MomentumAnalysis do
-      define :create_momentum_analysis, action: :create
-      define :upsert_momentum_analysis, action: :upsert
-      define :get_momentum_analysis, action: :read, get_by: [:id]
+    resource LongOrShort.Analysis.NewsAnalysis do
+      define :create_news_analysis, action: :create
+      define :upsert_news_analysis, action: :upsert
+      define :get_news_analysis, action: :read, get_by: [:id]
 
-      define :get_momentum_analysis_by_article,
+      define :get_news_analysis_by_article,
         action: :get_by_article,
         args: [:article_id],
         get?: true,
         not_found_error?: false
 
-      define :destroy_momentum_analysis, action: :destroy
+      define :destroy_news_analysis, action: :destroy
     end
   end
 end

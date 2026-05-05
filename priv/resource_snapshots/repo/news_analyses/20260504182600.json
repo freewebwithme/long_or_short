@@ -331,7 +331,7 @@
           "global": null,
           "strategy": null
         },
-        "name": "momentum_analyses_article_id_fkey",
+        "name": "news_analyses_article_id_fkey",
         "on_delete": "restrict",
         "on_update": "update",
         "primary_key?": true,
@@ -355,7 +355,7 @@
     {
       "all_tenants?": false,
       "base_filter": null,
-      "index_name": "momentum_analyses_unique_article_index",
+      "index_name": "news_analyses_unique_article_index",
       "keys": [
         {
           "type": "atom",
@@ -374,5 +374,5 @@
   },
   "repo": "Elixir.LongOrShort.Repo",
   "schema": null,
-  "table": "momentum_analyses"
+  "table": "news_analyses"
 }

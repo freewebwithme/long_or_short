@@ -1,9 +1,9 @@
-defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
+defmodule LongOrShort.AI.Prompts.NewsAnalysisTest do
   use ExUnit.Case, async: true
 
-  doctest LongOrShort.AI.Prompts.MomentumAnalysis
+  doctest LongOrShort.AI.Prompts.NewsAnalysis
 
-  alias LongOrShort.AI.Prompts.MomentumAnalysis
+  alias LongOrShort.AI.Prompts.NewsAnalysis
 
   defp article(overrides \\ %{}) do
     Map.merge(
@@ -31,26 +31,26 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
   describe "build/2 — message envelope" do
     test "returns [system, user]" do
       assert [%{role: "system", content: sys}, %{role: "user", content: usr}] =
-               MomentumAnalysis.build(article())
+               NewsAnalysis.build(article())
 
       assert is_binary(sys)
       assert is_binary(usr)
     end
 
     test "system prompt establishes trader persona" do
-      [%{content: sys}, _] = MomentumAnalysis.build(article())
+      [%{content: sys}, _] = NewsAnalysis.build(article())
 
       assert sys =~ "trader's analyst"
       assert sys =~ "$2–$10"
       assert sys =~ "spike-then-fade"
-      assert sys =~ "record_momentum_analysis"
+      assert sys =~ "record_news_analysis"
     end
   end
 
   describe "build/2 — user message rendering" do
     test "includes ticker, title, summary, source" do
       [_, %{content: content}] =
-        MomentumAnalysis.build(
+        NewsAnalysis.build(
           article(%{
             title: "TSLA delivers record",
             summary: "Tesla beats expectations.",
@@ -66,25 +66,25 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
     end
 
     test "renders (no summary) when summary is nil" do
-      [_, %{content: content}] = MomentumAnalysis.build(article(%{summary: nil}))
+      [_, %{content: content}] = NewsAnalysis.build(article(%{summary: nil}))
       assert content =~ "(no summary)"
     end
 
     test "renders (no summary) when summary is empty string" do
-      [_, %{content: content}] = MomentumAnalysis.build(article(%{summary: ""}))
+      [_, %{content: content}] = NewsAnalysis.build(article(%{summary: ""}))
       assert content =~ "(no summary)"
     end
   end
 
   describe "build/2 — past articles rendering" do
     test "shows placeholder when past_articles is empty" do
-      [_, %{content: content}] = MomentumAnalysis.build(article(), [])
+      [_, %{content: content}] = NewsAnalysis.build(article(), [])
       assert content =~ "(no past articles in window)"
     end
 
     test "renders a single past article" do
       one = past(1, %{title: "Earlier news"})
-      [_, %{content: content}] = MomentumAnalysis.build(article(), [one])
+      [_, %{content: content}] = NewsAnalysis.build(article(), [one])
 
       assert content =~ "Earlier news"
       refute content =~ "(no past articles"
@@ -92,7 +92,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
 
     test "renders multiple past articles in given order" do
       pasts = Enum.map(1..3, &past/1)
-      [_, %{content: content}] = MomentumAnalysis.build(article(), pasts)
+      [_, %{content: content}] = NewsAnalysis.build(article(), pasts)
 
       for a <- pasts do
         assert content =~ a.title
@@ -102,14 +102,14 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
 
   describe "build/2 — guideline content" do
     test "instructs the model to call the tool, not respond in text" do
-      [_, %{content: content}] = MomentumAnalysis.build(article())
+      [_, %{content: content}] = NewsAnalysis.build(article())
 
-      assert content =~ "record_momentum_analysis"
+      assert content =~ "record_news_analysis"
       assert content =~ "Do not respond in plain text"
     end
 
     test "explains repetition counting convention" do
-      [_, %{content: content}] = MomentumAnalysis.build(article())
+      [_, %{content: content}] = NewsAnalysis.build(article())
 
       assert content =~ "Count the new article in repetition_count"
       assert content =~ "First occurrence = 1"
@@ -117,7 +117,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysisTest do
 
     test "stays under sane token budget (~3.5k chars) with 5 past articles" do
       pasts = Enum.map(1..5, &past/1)
-      [%{content: sys}, %{content: usr}] = MomentumAnalysis.build(article(), pasts)
+      [%{content: sys}, %{content: usr}] = NewsAnalysis.build(article(), pasts)
 
       total = byte_size(sys) + byte_size(usr)
 

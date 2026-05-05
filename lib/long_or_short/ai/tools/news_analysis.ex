@@ -1,4 +1,4 @@
-defmodule LongOrShort.AI.Tools.MomentumAnalysis do
+defmodule LongOrShort.AI.Tools.NewsAnalysis do
   @moduledoc """
   Tool spec for momentum analysis. Provider-agnostic.
 
@@ -27,7 +27,7 @@ defmodule LongOrShort.AI.Tools.MomentumAnalysis do
   ## Phase 1 stubs
 
   The schema mirrors the writable columns of
-  `LongOrShort.Analysis.MomentumAnalysis` (LON-79) **except** the two
+  `LongOrShort.Analysis.NewsAnalysis` (LON-79) **except** the two
   fields that aren't LLM-shaped:
 
     * `:pump_fade_risk` — defaults to `:insufficient_data` until Phase 4
@@ -70,26 +70,26 @@ defmodule LongOrShort.AI.Tools.MomentumAnalysis do
 
   ## Examples
 
-      iex> spec = LongOrShort.AI.Tools.MomentumAnalysis.spec()
+      iex> spec = LongOrShort.AI.Tools.NewsAnalysis.spec()
       iex> spec.name
-      "record_momentum_analysis"
+      "record_news_analysis"
 
-      iex> schema = LongOrShort.AI.Tools.MomentumAnalysis.spec().input_schema
+      iex> schema = LongOrShort.AI.Tools.NewsAnalysis.spec().input_schema
       iex> schema.type
       "object"
 
-      iex> required = LongOrShort.AI.Tools.MomentumAnalysis.spec().input_schema.required
+      iex> required = LongOrShort.AI.Tools.NewsAnalysis.spec().input_schema.required
       iex> "verdict" in required and "headline_takeaway" in required
       true
 
-      iex> verdict = LongOrShort.AI.Tools.MomentumAnalysis.spec().input_schema.properties.verdict
+      iex> verdict = LongOrShort.AI.Tools.NewsAnalysis.spec().input_schema.properties.verdict
       iex> Enum.sort(verdict.enum)
       ["skip", "trade", "watch"]
   """
   @spec spec() :: LongOrShort.AI.Provider.tool_spec()
   def spec do
     %{
-      name: "record_momentum_analysis",
+      name: "record_news_analysis",
       description: """
       Record a comprehensive momentum-trading analysis of a small-cap news \
       article. The output drives a one-glance trading card (six signals + \

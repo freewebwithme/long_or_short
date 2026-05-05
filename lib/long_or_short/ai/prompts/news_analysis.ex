@@ -1,4 +1,4 @@
-defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
+defmodule LongOrShort.AI.Prompts.NewsAnalysis do
   @moduledoc """
   Prompt builder for momentum analysis. Provider-agnostic.
 
@@ -7,7 +7,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
   `user` (the article being analyzed plus optional past articles for
   repetition detection).
 
-  Pair this with `LongOrShort.AI.Tools.MomentumAnalysis.spec/0` (LON-81)
+  Pair this with `LongOrShort.AI.Tools.NewsAnalysis.spec/0` (LON-81)
   and `LongOrShort.AI.Provider.call/3` to run an analysis. Persisting the
   result is `LongOrShort.Analysis.MomentumAnalyzer`'s job (LON-82).
 
@@ -25,8 +25,8 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
   tool spec attached, the response is free text. With a tool spec
   attached and the prompt's closing instruction `Do not respond in plain
   text`, the model returns a structured `tool_call` matching the spec
-  instead — that's how `LongOrShort.AI.Tools.MomentumAnalysis.spec/0`
-  flows through to a writable `MomentumAnalysis` row.
+  instead — that's how `LongOrShort.AI.Tools.NewsAnalysis.spec/0`
+  flows through to a writable `NewsAnalysis` row.
 
   Splitting persona from task data has two practical wins: providers can
   cache the system prefix across calls (cost + latency), and tweaking
@@ -77,7 +77,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
   @system_prompt """
   You are a trader's analyst, not a research desk. Your job is to read one
   news headline + summary and produce a momentum-trading assessment by
-  calling the `record_momentum_analysis` tool.
+  calling the `record_news_analysis` tool.
 
   Trader profile:
     * Stocks priced $2–$10
@@ -94,7 +94,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
   Speak like a trader, not a research analyst. Korean is welcome where
   natural — the trader is bilingual.
 
-  Always respond by calling the `record_momentum_analysis` tool. Do not
+  Always respond by calling the `record_news_analysis` tool. Do not
   respond in plain text.
   """
 
@@ -102,7 +102,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
   Builds the messages list for one momentum-analysis call.
 
   Returns `[system, user]`. Pair with the
-  `LongOrShort.AI.Tools.MomentumAnalysis.spec/0` tool and pass both to
+  `LongOrShort.AI.Tools.NewsAnalysis.spec/0` tool and pass both to
   `LongOrShort.AI.Provider.call/3` — the model will invoke the tool
   with its analysis instead of replying in text.
 
@@ -119,7 +119,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
       ...>   published_at: ~U[2026-04-20 12:00:00Z],
       ...>   ticker: %{symbol: "BTBD"}
       ...> }
-      iex> [system, user] = LongOrShort.AI.Prompts.MomentumAnalysis.build(article)
+      iex> [system, user] = LongOrShort.AI.Prompts.NewsAnalysis.build(article)
       iex> system.role
       "system"
       iex> user.role
@@ -158,7 +158,7 @@ defmodule LongOrShort.AI.Prompts.MomentumAnalysis do
       * When repetition_count > 1, fill repetition_summary with a short cluster label.
       * Be specific in detail sections — bullet lists, not paragraphs.
 
-    Respond by calling the record_momentum_analysis tool. Do not respond in plain text.
+    Respond by calling the record_news_analysis tool. Do not respond in plain text.
     """
   end
 

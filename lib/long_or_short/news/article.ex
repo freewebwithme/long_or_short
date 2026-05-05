@@ -128,7 +128,7 @@ defmodule LongOrShort.News.Article do
       public? true
     end
 
-    has_one :momentum_analysis, LongOrShort.Analysis.MomentumAnalysis do
+    has_one :news_analysis, LongOrShort.Analysis.NewsAnalysis do
       public? true
     end
   end

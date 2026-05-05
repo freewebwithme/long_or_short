@@ -49,10 +49,10 @@ defmodule LongOrShort.AnalysisFixtures do
   end
 
   @doc """
-  Default attributes for a complete MomentumAnalysis. Caller supplies
+  Default attributes for a complete NewsAnalysis. Caller supplies
   `:article_id` separately via overrides.
   """
-  def valid_momentum_analysis_attrs(overrides \\ %{}) do
+  def valid_news_analysis_attrs(overrides \\ %{}) do
     Map.merge(
       %{
         verdict: :trade,
@@ -68,10 +68,10 @@ defmodule LongOrShort.AnalysisFixtures do
   end
 
   @doc """
-  Builds a MomentumAnalysis via the `:create` action. Lazily creates an
+  Builds a NewsAnalysis via the `:create` action. Lazily creates an
   Article fixture if `:article_id` is not supplied.
   """
-  def build_momentum_analysis(overrides \\ %{}) do
+  def build_news_analysis(overrides \\ %{}) do
     article_id =
       Map.get_lazy(overrides, :article_id, fn ->
         NewsFixtures.build_article().id
@@ -80,16 +80,16 @@ defmodule LongOrShort.AnalysisFixtures do
     attrs =
       overrides
       |> Map.delete(:article_id)
-      |> valid_momentum_analysis_attrs()
+      |> valid_news_analysis_attrs()
       |> Map.put(:article_id, article_id)
 
-    case LongOrShort.Analysis.create_momentum_analysis(attrs, authorize?: false) do
+    case LongOrShort.Analysis.create_news_analysis(attrs, authorize?: false) do
       {:ok, analysis} ->
         analysis
 
       {:error, error} ->
         raise """
-        Failed to create momentum_analysis fixture.
+        Failed to create news_analysis fixture.
         attrs: #{inspect(attrs)}
         error: #{inspect(error)}
         """
