@@ -7,6 +7,20 @@ defmodule LongOrShort.Accounts do
 
   resources do
     resource LongOrShort.Accounts.Token
+
+    resource LongOrShort.Accounts.TradingProfile do
+      define :create_trading_profile, action: :create
+      define :upsert_trading_profile, action: :upsert
+
+      define :get_trading_profile_by_user,
+        action: :get_by_user,
+        args: [:user_id],
+        get?: true,
+        not_found_error?: false
+
+      define :destroy_trading_profile, action: :destroy
+    end
+
     resource LongOrShort.Accounts.User
   end
 end
