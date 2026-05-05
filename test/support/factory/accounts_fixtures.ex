@@ -41,4 +41,51 @@ defmodule LongOrShort.AccountsFixtures do
   Returns a SystemActor for use in tests that need a trusted caller.
   """
   def system_actor, do: LongOrShort.Accounts.SystemActor.new("test")
+
+  @doc """
+  Default attributes for a complete TradingProfile (momentum_day persona,
+  matches the values currently hardcoded in the prompt). Caller supplies
+  `:user_id` separately via overrides.
+  """
+  def valid_trading_profile_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        trading_style: :momentum_day,
+        time_horizon: :intraday,
+        market_cap_focuses: [:micro, :small],
+        catalyst_preferences: [:partnership, :fda, :ma, :contract_win],
+        price_min: Decimal.new("2.0"),
+        price_max: Decimal.new("10.0"),
+        float_max: 50_000_000
+      },
+      overrides
+    )
+  end
+
+  @doc """
+  Builds a TradingProfile via the `:create` action. Lazily creates a
+  trader user if `:user_id` is not supplied.
+  """
+  def build_trading_profile(overrides \\ %{}) do
+    user_id =
+      Map.get_lazy(overrides, :user_id, fn -> build_trader_user().id end)
+
+    attrs =
+      overrides
+      |> Map.delete(:user_id)
+      |> valid_trading_profile_attrs()
+      |> Map.put(:user_id, user_id)
+
+    case LongOrShort.Accounts.create_trading_profile(attrs, authorize?: false) do
+      {:ok, profile} ->
+        profile
+
+      {:error, error} ->
+        raise """
+        Failed to create trading_profile fixture.
+        attrs: #{inspect(attrs)}
+        error: #{inspect(error)}
+        """
+    end
+  end
 end

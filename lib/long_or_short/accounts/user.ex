@@ -39,6 +39,17 @@ defmodule LongOrShort.Accounts.User do
     end
   end
 
+  relationships do
+    has_one :trading_profile, LongOrShort.Accounts.TradingProfile do
+      public? true
+
+      description """
+      The user's trading profile (LON-88) — drives prompt personalization
+      in MomentumAnalysis. nil until the user (or seed) creates one.
+      """
+    end
+  end
+
   authentication do
     add_ons do
       log_out_everywhere do
