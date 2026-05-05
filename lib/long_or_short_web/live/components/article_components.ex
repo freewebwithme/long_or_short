@@ -3,72 +3,120 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
   HEEx components for rendering articles in trader-facing surfaces:
   /feed, dashboard latest-news widget, future ticker drilldown.
 
-  The Analyze button lives here so any LiveView that hosts these cards
-  can wire `handle_event("analyze", ...)` to drive the analysis flow.
-  Analysis-status badges (pending / complete / failed) are intentionally
-  absent during the gap between LON-80 (RepetitionAnalysis retired) and
-  LON-83 (`/feed` UI rewire on top of `NewsAnalysis`); the Analyze
-  button remains visible but its host LiveView shows a flash explaining
-  the rebuild.
+  `article_card` is state-aware:
+
+    * No analysis, not analyzing → Analyze button visible
+    * `:analyzing?` true → spinner badge + skeleton bar, button hidden
+    * `:analysis` present → `news_card` + (if `:expanded?`) `news_detail`,
+      header Analyze button hidden
+
+  Host LiveViews wire `handle_event("analyze", _, _)`,
+  `handle_event("toggle_detail", _, _)`, and
+  `handle_info({:news_analysis_ready, _}, _)` to drive the flow.
   """
   use Phoenix.Component
   use LongOrShortWeb, :verified_routes
 
   alias LongOrShortWeb.Format
+  alias LongOrShortWeb.Live.Components.NewsComponents
 
   @doc """
-  Render a single article as a card: time / ticker + live price /
-  title / source / Analyze button.
+  Render a single article as a card.
 
   ## Attrs
-
-  * `article` — `News.Article` with `:ticker` preloaded
-  * `analysis` — reserved for the LON-83 rewire; ignored today
-  * `context` — short string used to disambiguate hook ids when the
-    same article renders in multiple surfaces (default `"card"`)
+    * `:article` — `News.Article` with `:ticker` preloaded
+    * `:analysis` — `%NewsAnalysis{} | nil`. Caller is responsible for
+      pulling `article.news_analysis` (or whatever source) and passing
+      a struct or nil — no Ash `NotLoaded` should reach here.
+    * `:analyzing?` — true while the analyzer is running for this article
+    * `:expanded?` — whether the Detail view is open
+    * `:context` — short string for hook id disambiguation (default `"card"`)
   """
   attr :article, :map, required: true
   attr :analysis, :any, default: nil
+  attr :analyzing?, :boolean, default: false
+  attr :expanded?, :boolean, default: false
   attr :context, :string, default: "card"
 
   def article_card(assigns) do
     ~H"""
-    <div class="border border-base-300 rounded p-3 bg-base-200 shadow-sm flex gap-3 items-start">
-      <div class="text-xs opacity-60 w-20 flex-shrink-0">
-        <time datetime={DateTime.to_iso8601(@article.published_at)}>
-          {Format.relative_time(@article.published_at)}
-        </time>
-      </div>
+    <div class="border border-base-300 rounded p-3 bg-base-200 shadow-sm">
+      <div class="flex gap-3 items-start">
+        <div class="text-xs opacity-60 w-20 flex-shrink-0">
+          <time datetime={DateTime.to_iso8601(@article.published_at)}>
+            {Format.relative_time(@article.published_at)}
+          </time>
+        </div>
 
-      <div class="w-20 flex-shrink-0">
-        <div class="font-bold">{@article.ticker.symbol}</div>
-        <.price_label
-          id={"price-#{@context}-#{@article.id}"}
-          symbol={@article.ticker.symbol}
-          initial_price={@article.ticker.last_price}
-          class="text-xs opacity-60"
+        <div class="w-20 flex-shrink-0">
+          <div class="font-bold">{@article.ticker.symbol}</div>
+          <.price_label
+            id={"price-#{@context}-#{@article.id}"}
+            symbol={@article.ticker.symbol}
+            initial_price={@article.ticker.last_price}
+            class="text-xs opacity-60"
+          />
+        </div>
+
+        <div class="flex-grow">{@article.title}</div>
+
+        <div class="text-xs px-2 py-0.5 rounded bg-base-300 flex-shrink-0">
+          {@article.source}
+        </div>
+
+        <.analyze_status
+          analyzing?={@analyzing?}
+          has_analysis?={not is_nil(@analysis)}
+          article_id={@article.id}
         />
       </div>
 
-      <div class="flex-grow">{@article.title}</div>
-
-      <div class="text-xs px-2 py-0.5 rounded bg-base-300 flex-shrink-0">
-        {@article.source}
+      <div :if={@analyzing?} class="mt-3 pt-3 border-t border-base-300">
+        <div class="h-4 bg-base-300 rounded animate-pulse w-3/4"></div>
       </div>
 
-      <button
-        type="button"
-        phx-click="analyze"
-        phx-value-id={@article.id}
-        class="text-xs px-2 py-0.5 rounded bg-primary text-primary-content flex-shrink-0 hover:bg-primary-focus"
-      >
-        Analyze
-      </button>
+      <NewsComponents.news_card
+        :if={@analysis && not @analyzing?}
+        analysis={@analysis}
+        expanded?={@expanded?}
+      />
+
+      <NewsComponents.news_detail
+        :if={@analysis && @expanded?}
+        analysis={@analysis}
+      />
     </div>
     """
   end
 
-  # ── Price label (reusable, hook anchored here) ──
+  # ── analyze_status: the slot in the card header that switches based on state ──
+
+  attr :analyzing?, :boolean, required: true
+  attr :has_analysis?, :boolean, required: true
+  attr :article_id, :string, required: true
+
+  defp analyze_status(assigns) do
+    ~H"""
+    <span
+      :if={@analyzing?}
+      class="text-xs px-2 py-0.5 rounded bg-base-300 flex-shrink-0 inline-flex items-center gap-1
+    opacity-60"
+    >
+      <span class="loading loading-spinner loading-xs"></span> Analyzing…
+    </span>
+
+    <button
+      :if={not @analyzing? and not @has_analysis?}
+      type="button"
+      phx-click="analyze"
+      phx-value-id={@article_id}
+      class="text-xs px-2 py-0.5 rounded bg-primary text-primary-content flex-shrink-0
+    hover:bg-primary-focus"
+    >
+      Analyze
+    </button>
+    """
+  end
 
   attr :id, :string, required: true
   attr :symbol, :string, required: true
