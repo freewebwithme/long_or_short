@@ -21,9 +21,6 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
   alias LongOrShort.News
   alias LongOrShort.News.Events
-  alias LongOrShort.AI.MockProvider
-  alias LongOrShort.Analysis
-  alias LongOrShort.Analysis.Events, as: AnalysisEvents
 
   defp log_in_user(conn, user) do
     conn
@@ -127,38 +124,18 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
   end
 
-  describe "analyze workflow" do
+  # NOTE: Full analyze workflow tests deferred — LON-80 retired the
+  # RepetitionAnalyzer and the new NewsAnalyzer (LON-82) plus its UI
+  # rewire (LON-83) haven't landed. During the gap the Analyze button
+  # is visible but shows a flash on click.
+  describe "analyze button — LON-80 rebuild gap" do
     setup %{conn: conn} do
-      MockProvider.reset()
       user = build_trader_user()
       conn = log_in_user(conn, user)
       {:ok, conn: conn, user: user}
     end
 
-    defp tool_response(input) do
-      {:ok,
-       %{
-         tool_calls: [%{name: "report_repetition_analysis", input: input}],
-         text: nil,
-         usage: %{input_tokens: 10, output_tokens: 5}
-       }}
-    end
-
-    defp valid_input(overrides \\ %{}) do
-      Map.merge(
-        %{
-          "is_repetition" => true,
-          "theme" => "partnership",
-          "repetition_count" => 4,
-          "related_article_ids" => [],
-          "fatigue_level" => "high",
-          "reasoning" => "fourth partnership headline"
-        },
-        overrides
-      )
-    end
-
-    test "shows Analyze button for articles without an analysis", %{conn: conn} do
+    test "renders Analyze button on every article", %{conn: conn} do
       ticker = build_ticker(%{symbol: "AAPL"})
       build_article_for_ticker(ticker, %{title: "Apple Q2"})
 
@@ -168,96 +145,18 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ ~s|phx-click="analyze"|
     end
 
-    test "click triggers analysis and renders result inline", %{conn: conn} do
-      AnalysisEvents.subscribe()
-
+    test "clicking Analyze shows the rebuild-in-progress flash", %{conn: conn} do
       ticker = build_ticker(%{symbol: "BTBD"})
-      article = build_article_for_ticker(ticker, %{title: "BTBD partnership #4"})
-
-      MockProvider.stub(fn _, _, _ -> tool_response(valid_input()) end)
+      article = build_article_for_ticker(ticker, %{title: "BTBD news"})
 
       {:ok, view, _html} = live(conn, ~p"/feed")
 
-      view
-      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
-      |> render_click()
+      html =
+        view
+        |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+        |> render_click()
 
-      # Once :complete arrives in the test process, the LiveView (which
-      # subscribed in mount) has already updated its assigns map.
-      assert_receive {:repetition_analysis_started, _}, 1_000
-      assert_receive {:repetition_analysis_complete, _}, 2_000
-
-      html = render(view)
-
-      assert html =~ "🔁"
-      assert html =~ "4×"
-      assert html =~ "partnership"
-    end
-
-    test "shows 'analyzing…' while analysis is pending", %{conn: conn} do
-      ticker = build_ticker(%{symbol: "PEND"})
-      article = build_article_for_ticker(ticker, %{title: "Pending news"})
-
-      {:ok, view, _html} = live(conn, ~p"/feed")
-
-      {:ok, pending} =
-        Analysis.start_repetition_analysis(article.id, authorize?: false)
-
-      AnalysisEvents.broadcast_repetition_analysis_started(pending)
-
-      html = render(view)
-
-      assert html =~ "analyzing"
-      refute html =~ ~s|phx-click="analyze"|
-    end
-
-    test "renders existing :complete analysis on initial mount", %{conn: conn} do
-      ticker = build_ticker(%{symbol: "NVDA"})
-      article = build_article_for_ticker(ticker, %{title: "NVDA news"})
-
-      {:ok, pending} =
-        Analysis.start_repetition_analysis(article.id, authorize?: false)
-
-      {:ok, _completed} =
-        Analysis.complete_repetition_analysis(
-          pending,
-          %{
-            is_repetition: true,
-            theme: "earnings",
-            repetition_count: 2,
-            related_article_ids: [],
-            fatigue_level: :medium,
-            reasoning: "second earnings",
-            model_used: "test",
-            tokens_used_input: 0,
-            tokens_used_output: 0
-          },
-          authorize?: false
-        )
-
-      {:ok, _view, html} = live(conn, ~p"/feed")
-
-      assert html =~ "🔁"
-      refute html =~ ~s|phx-click="analyze"|
-    end
-
-    test "renders failed analysis with warning icon", %{conn: conn} do
-      AnalysisEvents.subscribe()
-
-      ticker = build_ticker(%{symbol: "ERR"})
-      article = build_article_for_ticker(ticker, %{title: "Err news"})
-
-      MockProvider.stub(fn _, _, _ -> {:error, {:network_error, :timeout}} end)
-
-      {:ok, view, _html} = live(conn, ~p"/feed")
-
-      view
-      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
-      |> render_click()
-
-      assert_receive {:repetition_analysis_failed, _}, 2_000
-
-      assert render(view) =~ "⚠"
+      assert html =~ "Analyzer rebuild in progress"
     end
   end
 

@@ -3,7 +3,7 @@ defmodule LongOrShort.AI.Provider do
   Behaviour for LLM providers (Claude, Qwen, etc.).
 
   All providers normalize their responses to the same shape so callers
-  (e.g. `LongOrShort.Analysis.RepetitionAnalyzer`) don't need to know
+  (e.g. `LongOrShort.Analysis.NewsAnalyzer`) don't need to know
   which provider is being used.
 
   ## Adding a new provider
