@@ -3,10 +3,13 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
   HEEx components for rendering articles in trader-facing surfaces:
   /feed, dashboard latest-news widget, future ticker drilldown.
 
-  The Analyze button + analysis-status badges live here so any
-  LiveView that hosts these cards can wire `handle_event("analyze",
-  ...)` and the `:repetition_analysis_*` handle_info clauses to get
-  the same behaviour as `/feed`.
+  The Analyze button lives here so any LiveView that hosts these cards
+  can wire `handle_event("analyze", ...)` to drive the analysis flow.
+  Analysis-status badges (pending / complete / failed) are intentionally
+  absent during the gap between LON-80 (RepetitionAnalysis retired) and
+  LON-83 (`/feed` UI rewire on top of `NewsAnalysis`); the Analyze
+  button remains visible but its host LiveView shows a flash explaining
+  the rebuild.
   """
   use Phoenix.Component
   use LongOrShortWeb, :verified_routes
@@ -15,12 +18,14 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
 
   @doc """
   Render a single article as a card: time / ticker + live price /
-  title / source / analyze button or status badge.
+  title / source / Analyze button.
 
   ## Attrs
 
   * `article` — `News.Article` with `:ticker` preloaded
-  * `analysis` — latest `RepetitionAnalysis` for the article, or nil
+  * `analysis` — reserved for the LON-83 rewire; ignored today
+  * `context` — short string used to disambiguate hook ids when the
+    same article renders in multiple surfaces (default `"card"`)
   """
   attr :article, :map, required: true
   attr :analysis, :any, default: nil
@@ -51,7 +56,14 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
         {@article.source}
       </div>
 
-      <.analysis_cell analysis={@analysis} article_id={@article.id} />
+      <button
+        type="button"
+        phx-click="analyze"
+        phx-value-id={@article.id}
+        class="text-xs px-2 py-0.5 rounded bg-primary text-primary-content flex-shrink-0 hover:bg-primary-focus"
+      >
+        Analyze
+      </button>
     </div>
     """
   end
@@ -96,58 +108,4 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
     </script>
     """
   end
-
-  attr :analysis, :any, required: true
-  attr :article_id, :string, required: true
-
-  def analysis_cell(%{analysis: nil} = assigns) do
-    ~H"""
-    <button
-      type="button"
-      phx-click="analyze"
-      phx-value-id={@article_id}
-      class="text-xs px-2 py-0.5 rounded bg-primary text-primary-content flex-shrink-0 hover:bg-primary-focus"
-    >
-      Analyze
-    </button>
-    """
-  end
-
-  def analysis_cell(%{analysis: %{status: :pending}} = assigns) do
-    ~H"""
-    <div class="text-xs italic opacity-60 flex-shrink-0">analyzing…</div>
-    """
-  end
-
-  def analysis_cell(%{analysis: %{status: :complete} = a} = assigns) do
-    assigns = assign(assigns, :a, a)
-
-    ~H"""
-    <div class="flex gap-1 items-center text-xs flex-shrink-0">
-      <span
-        class={"w-2 h-2 rounded-full #{fatigue_color(@a.fatigue_level)}"}
-        title={"fatigue: #{@a.fatigue_level}"}
-      />
-      <span :if={@a.is_repetition} class="opacity-80">🔁 {@a.repetition_count}×</span>
-      <span :if={@a.theme} class="px-1.5 py-0.5 rounded bg-base-300 opacity-80 max-w-[10rem] truncate">
-        {@a.theme}
-      </span>
-    </div>
-    """
-  end
-
-  def analysis_cell(%{analysis: %{status: :failed} = a} = assigns) do
-    assigns = assign(assigns, :a, a)
-
-    ~H"""
-    <div class="text-xs flex-shrink-0" title={@a.error_message || "analysis failed"}>
-      <span class="text-error">⚠</span>
-    </div>
-    """
-  end
-
-  defp fatigue_color(:low), do: "bg-success"
-  defp fatigue_color(:medium), do: "bg-warning"
-  defp fatigue_color(:high), do: "bg-error"
-  defp fatigue_color(_), do: "bg-base-300"
 end

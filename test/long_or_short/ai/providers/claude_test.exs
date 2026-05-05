@@ -6,7 +6,7 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
   @messages [%{role: "user", content: "hi"}]
   @tools [
     %{
-      name: "report_repetition_analysis",
+      name: "record_news_analysis",
       description: "test",
       input_schema: %{type: "object", properties: %{}}
     }
@@ -61,7 +61,7 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
         assert is_list(body["tools"])
         assert body["tool_choice"] == %{"type" => "auto"}
 
-        Req.Test.json(conn, tool_use_response("report_repetition_analysis", %{"ok" => true}))
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{"ok" => true}))
       end)
 
       assert {:ok, _} = Claude.call(@messages, @tools)
@@ -86,13 +86,13 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
         {:ok, raw, conn} = Plug.Conn.read_body(conn)
         body = Jason.decode!(raw)
 
-        assert body["tool_choice"] == %{"type" => "tool", "name" => "report_repetition_analysis"}
+        assert body["tool_choice"] == %{"type" => "tool", "name" => "record_news_analysis"}
 
-        Req.Test.json(conn, tool_use_response("report_repetition_analysis", %{}))
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
       end)
 
       Claude.call(@messages, @tools,
-        tool_choice: %{type: "tool", name: "report_repetition_analysis"}
+        tool_choice: %{type: "tool", name: "record_news_analysis"}
       )
     end
   end
@@ -103,8 +103,8 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
         Req.Test.json(
           conn,
           tool_use_response(
-            "report_repetition_analysis",
-            %{"is_repetition" => true, "repetition_count" => 2},
+            "record_news_analysis",
+            %{"verdict" => "trade", "headline_takeaway" => "Strong catalyst"},
             input_tokens: 1234,
             output_tokens: 567
           )
@@ -115,8 +115,8 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
 
       assert response.tool_calls == [
                %{
-                 name: "report_repetition_analysis",
-                 input: %{"is_repetition" => true, "repetition_count" => 2}
+                 name: "record_news_analysis",
+                 input: %{"verdict" => "trade", "headline_takeaway" => "Strong catalyst"}
                }
              ]
 

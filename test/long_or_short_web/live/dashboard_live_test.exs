@@ -6,27 +6,11 @@ defmodule LongOrShortWeb.DashboardLiveTest do
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
   alias LongOrShort.News
-  alias LongOrShort.Analysis
-  alias LongOrShort.AI.MockProvider
 
   defp log_in_user(conn, user) do
     conn
     |> Plug.Test.init_test_session(%{})
     |> store_in_session(user)
-  end
-
-  defp valid_input(overrides \\ %{}) do
-    Map.merge(
-      %{
-        "is_repetition" => true,
-        "theme" => "partnership",
-        "repetition_count" => 4,
-        "related_article_ids" => [],
-        "fatigue_level" => "high",
-        "reasoning" => "fourth partnership headline"
-      },
-      overrides
-    )
   end
 
   describe "authentication" do
@@ -260,32 +244,21 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert render(view) =~ "Live tesla news"
     end
 
-    test "click Analyze on dashboard kicks off analysis", %{conn: conn} do
-      Analysis.Events.subscribe()
-      MockProvider.reset()
-
-      MockProvider.stub(fn _, _, _ ->
-        {:ok,
-         %{
-           tool_calls: [%{name: "report_repetition_analysis", input: valid_input()}],
-           text: nil,
-           usage: %{input_tokens: 1, output_tokens: 1}
-         }}
-      end)
-
+    # NOTE: Full analyze workflow test deferred — LON-80 retired the
+    # RepetitionAnalyzer and the new NewsAnalyzer (LON-82) plus its UI
+    # rewire (LON-83) haven't landed.
+    test "clicking Analyze on dashboard shows the rebuild-in-progress flash", %{conn: conn} do
       ticker = build_ticker(%{symbol: "DASH"})
       article = build_article_for_ticker(ticker, %{title: "Dash news"})
 
       {:ok, view, _html} = live(conn, ~p"/")
 
-      view
-      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
-      |> render_click()
+      html =
+        view
+        |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+        |> render_click()
 
-      assert_receive {:repetition_analysis_started, _}, 1_000
-      assert_receive {:repetition_analysis_complete, _}, 2_000
-
-      assert render(view) =~ "🔁"
+      assert html =~ "Analyzer rebuild in progress"
     end
 
     test "empty state when no articles", %{conn: conn} do

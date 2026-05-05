@@ -9,8 +9,8 @@ defmodule LongOrShortWeb.DashboardLive do
   """
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.{Analysis, Indices, News, Tickers}
-  alias LongOrShort.Analysis.{Events, RepetitionAnalyzer}
+  alias LongOrShort.{Indices, News, Tickers}
+  alias LongOrShort.Analysis.Events
   alias LongOrShort.Tickers.Watchlist
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
@@ -28,15 +28,12 @@ defmodule LongOrShortWeb.DashboardLive do
 
     actor = socket.assigns.current_user
     news = load_news(actor)
-    analyses = load_latest_analyses(news, actor)
 
     socket =
       socket
       |> assign(:watchlist, load_watchlist(actor))
       |> assign(:news, news)
-      |> assign(:analyses, analyses)
       |> assign(:active_news, [])
-      |> assign(:active_analyses, %{})
       |> assign(:search_query, "")
       |> assign(:search_results, [])
       |> assign(:active_ticker, nil)
@@ -46,12 +43,9 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("analyze", %{"id" => article_id}, socket) do
-    Task.Supervisor.start_child(
-      LongOrShort.Analysis.TaskSupervisor,
-      fn -> RepetitionAnalyzer.analyze(article_id) end
-    )
-
+  def handle_event("analyze", %{"id" => _article_id}, socket) do
+    # LON-83 will rebuild this on top of LON-82's `NewsAnalyzer`.
+    socket = put_flash(socket, :info, "Analyzer rebuild in progress — try again soon.")
     {:noreply, socket}
   end
 
@@ -91,8 +85,7 @@ defmodule LongOrShortWeb.DashboardLive do
        |> assign(:active_ticker, ticker)
        |> assign(:active_news, articles)
        |> assign(:search_query, ticker.symbol)
-       |> assign(:search_results, [])
-       |> assign(:active_analyses, load_latest_analyses(articles, actor))}
+       |> assign(:search_results, [])}
     else
       _ -> {:noreply, socket}
     end
@@ -104,8 +97,7 @@ defmodule LongOrShortWeb.DashboardLive do
      |> assign(:search_query, "")
      |> assign(:search_results, [])
      |> assign(:active_ticker, nil)
-     |> assign(:active_news, [])
-     |> assign(:active_analyses, %{})}
+     |> assign(:active_news, [])}
   end
 
   @impl true
@@ -134,27 +126,6 @@ defmodule LongOrShortWeb.DashboardLive do
     {:noreply, update(socket, :indices, &Map.put(&1, label, payload))}
   end
 
-  def handle_info({event, %{article_id: id} = analysis}, socket)
-      when event in [
-             :repetition_analysis_started,
-             :repetition_analysis_complete,
-             :repetition_analysis_failed
-           ] do
-    active_ids = socket.assigns.active_news |> Enum.map(& &1.id) |> MapSet.new()
-
-    socket =
-      update(socket, :analyses, &Map.put(&1, id, analysis))
-
-    socket =
-      if MapSet.member?(active_ids, id) do
-        update(socket, :active_analyses, &Map.put(&1, id, analysis))
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
   @impl true
   def render(assigns) do
     ~H"""
@@ -173,12 +144,11 @@ defmodule LongOrShortWeb.DashboardLive do
             <.ticker_news_card
               active_ticker={@active_ticker}
               news={@active_news}
-              analyses={@active_analyses}
             />
           </div>
         </div>
         <!-- Bottom: global latest news -->
-        <.global_news_card news={@news} analyses={@analyses} />
+        <.global_news_card news={@news} />
       </div>
     </Layouts.app>
     """
@@ -266,7 +236,6 @@ defmodule LongOrShortWeb.DashboardLive do
 
   attr :active_ticker, :any, required: true
   attr :news, :list, required: true
-  attr :analyses, :map, required: true
 
   defp ticker_news_card(assigns) do
     ~H"""
@@ -283,7 +252,6 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
-          analysis={Map.get(@analyses, article.id)}
           context="active"
         />
       </div>
@@ -371,7 +339,6 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   attr :news, :list, required: true
-  attr :analyses, :map, required: true
 
   defp global_news_card(assigns) do
     ~H"""
@@ -386,7 +353,6 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
-          analysis={Map.get(@analyses, article.id)}
           context="global"
         />
       </div>
@@ -411,17 +377,6 @@ defmodule LongOrShortWeb.DashboardLive do
       {:ok, articles} -> articles
       _ -> []
     end
-  end
-
-  defp load_latest_analyses(articles, actor) do
-    articles
-    |> Enum.map(& &1.id)
-    |> Enum.reduce(%{}, fn article_id, acc ->
-      case Analysis.get_latest_repetition_analysis(article_id, actor: actor) do
-        {:ok, %{} = analysis} -> Map.put(acc, article_id, analysis)
-        _ -> acc
-      end
-    end)
   end
 
   defp index_color(pct) do

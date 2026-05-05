@@ -3,20 +3,21 @@ defmodule LongOrShortWeb.FeedLive do
   Real-time news feed page. Subscribes to:
 
   * `News.Events` — to prepend newly-ingested articles to the stream
-  * `Analysis.Events` — to flip cards to "analyzing…" / render result
-    badges as analyses move through pending → complete | failed
+  * `Analysis.Events` — for future analysis-status badges (no events
+    are published until LON-82's `NewsAnalyzer` lands; LON-83 wires
+    the rendering)
 
   Articles render as a LiveView stream so the feed doesn't hold an
-  unbounded list in socket assigns. Latest analysis per article is
-  kept in a separate `:analyses` map keyed by `article_id` for cheap
-  card lookup; that map is bounded in practice by the visible stream.
+  unbounded list in socket assigns. The Analyze button is visible but
+  shows a flash explaining the rebuild is in progress — analysis flow
+  is rebuilt in LON-83.
   """
   use LongOrShortWeb, :live_view
 
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
-  alias LongOrShort.{Analysis, News}
-  alias LongOrShort.Analysis.{Events, RepetitionAnalyzer}
+  alias LongOrShort.News
+  alias LongOrShort.Analysis.Events
 
   @initial_limit 30
 
@@ -39,12 +40,9 @@ defmodule LongOrShortWeb.FeedLive do
   end
 
   @impl true
-  def handle_event("analyze", %{"id" => article_id}, socket) do
-    Task.Supervisor.start_child(
-      LongOrShort.Analysis.TaskSupervisor,
-      fn -> RepetitionAnalyzer.analyze(article_id) end
-    )
-
+  def handle_event("analyze", %{"id" => _article_id}, socket) do
+    # LON-83 will rebuild this on top of LON-82's `NewsAnalyzer`.
+    socket = put_flash(socket, :info, "Analyzer rebuild in progress — try again soon.")
     {:noreply, socket}
   end
 
@@ -94,20 +92,6 @@ defmodule LongOrShortWeb.FeedLive do
 
       {:error, _} ->
         {:noreply, socket}
-    end
-  end
-
-  def handle_info({event, %{article_id: id} = analysis}, socket)
-      when event in [
-             :repetition_analysis_started,
-             :repetition_analysis_complete,
-             :repetition_analysis_failed
-           ] do
-    socket = update(socket, :analyses, &Map.put(&1, id, analysis))
-
-    case News.get_article(id, load: [:ticker], actor: socket.assigns.current_user) do
-      {:ok, article} -> {:noreply, stream_insert(socket, :articles, article)}
-      {:error, _} -> {:noreply, socket}
     end
   end
 
@@ -178,10 +162,7 @@ defmodule LongOrShortWeb.FeedLive do
             :for={{dom_id, article} <- @streams.articles}
             id={dom_id}
           >
-            <ArticleComponents.article_card
-              article={article}
-              analysis={Map.get(@analyses, article.id)}
-            />
+            <ArticleComponents.article_card article={article} />
           </div>
         </div>
       </div>
@@ -190,17 +171,6 @@ defmodule LongOrShortWeb.FeedLive do
   end
 
   # ── helpers ────────────────────────────────────────────────────────
-
-  defp load_latest_analyses(articles, actor) do
-    articles
-    |> Enum.map(& &1.id)
-    |> Enum.reduce(%{}, fn article_id, acc ->
-      case Analysis.get_latest_repetition_analysis(article_id, actor: actor) do
-        {:ok, %{} = analysis} -> Map.put(acc, article_id, analysis)
-        _ -> acc
-      end
-    end)
-  end
 
   defp empty_filter, do: %{price_min: nil, price_max: nil, float_max: nil}
 
@@ -216,11 +186,8 @@ defmodule LongOrShortWeb.FeedLive do
     {:ok, articles} =
       News.list_recent_articles(args, load: [:ticker], actor: actor)
 
-    analyses = load_latest_analyses(articles, actor)
-
     socket
     |> assign(:article_count, length(articles))
-    |> assign(:analyses, analyses)
     |> stream(:articles, articles, reset: true)
   end
 

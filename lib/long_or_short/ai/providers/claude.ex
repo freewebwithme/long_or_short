@@ -28,7 +28,7 @@ defmodule LongOrShort.AI.Providers.Claude do
   ## Errors
 
   All errors are returned as `{:error, reason}`. Retries / backoff are
-  the caller's responsibility (see `LongOrShort.Analysis.RepetitionAnalyzer`,
+  the caller's responsibility (see `LongOrShort.Analysis.NewsAnalyzer`,
   LON-27). Possible reasons:
 
     * `{:http_error, status, body}` — non-2xx response
