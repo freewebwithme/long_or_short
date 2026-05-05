@@ -13,6 +13,7 @@ defmodule LongOrShort.News do
     resource LongOrShort.News.Article do
       define :create_article, action: :create
       define :ingest_article, action: :ingest
+      define :create_manual_article, action: :create_manual
       define :get_article, action: :read, get_by: [:id]
       define :list_articles, action: :read
       define :list_articles_by_ticker, action: :by_ticker, args: [:ticker_id]
