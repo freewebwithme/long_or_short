@@ -13,6 +13,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
   use LongOrShortWeb.ConnCase, async: false
 
+  import LongOrShort.AnalysisFixtures
   import Phoenix.LiveViewTest
   import LongOrShort.AccountsFixtures
   import LongOrShort.NewsFixtures
@@ -21,6 +22,13 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
   alias LongOrShort.News
   alias LongOrShort.News.Events
+  alias LongOrShort.AI.MockProvider
+  alias LongOrShort.Analysis.Events, as: AnalysisEvents
+
+  setup do
+    MockProvider.reset()
+    :ok
+  end
 
   defp log_in_user(conn, user) do
     conn
@@ -124,42 +132,6 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
   end
 
-  # NOTE: Full analyze workflow tests deferred — LON-80 retired the
-  # RepetitionAnalyzer and the new NewsAnalyzer (LON-82) plus its UI
-  # rewire (LON-83) haven't landed. During the gap the Analyze button
-  # is visible but shows a flash on click.
-  describe "analyze button — LON-80 rebuild gap" do
-    setup %{conn: conn} do
-      user = build_trader_user()
-      conn = log_in_user(conn, user)
-      {:ok, conn: conn, user: user}
-    end
-
-    test "renders Analyze button on every article", %{conn: conn} do
-      ticker = build_ticker(%{symbol: "AAPL"})
-      build_article_for_ticker(ticker, %{title: "Apple Q2"})
-
-      {:ok, _view, html} = live(conn, ~p"/feed")
-
-      assert html =~ "Analyze"
-      assert html =~ ~s|phx-click="analyze"|
-    end
-
-    test "clicking Analyze shows the rebuild-in-progress flash", %{conn: conn} do
-      ticker = build_ticker(%{symbol: "BTBD"})
-      article = build_article_for_ticker(ticker, %{title: "BTBD news"})
-
-      {:ok, view, _html} = live(conn, ~p"/feed")
-
-      html =
-        view
-        |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
-        |> render_click()
-
-      assert html =~ "Analyzer rebuild in progress"
-    end
-  end
-
   describe "live price label" do
     setup %{conn: conn} do
       user = build_trader_user()
@@ -228,6 +200,170 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
       assert html =~ ~r|href="/feed"[^>]*btn-active|
       refute html =~ ~r|href="/"[^>]*btn-active[^>]*>\s*Dashboard|
+    end
+  end
+
+  describe "analysis card rendering" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "pre-analyzed article shows all 6 pills + headline_takeaway",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "AAPL"})
+
+      article =
+        build_article_for_ticker(ticker, %{title: "Apple Q2 partnership"})
+
+      # default fixture: verdict :trade, catalyst_strength :strong,
+      # sentiment :positive, llm_provider :claude
+      # plus resource defaults: pump_fade_risk :insufficient_data,
+      # strategy_match :partial, repetition_count 1
+      build_news_analysis(%{article_id: article.id})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      # 6 pill values (uppercase, underscores → spaces)
+      assert html =~ "STRONG"
+      assert html =~ "PARTNERSHIP"
+      assert html =~ "POSITIVE"
+      assert html =~ "INSUFFICIENT DATA"
+      assert html =~ "PARTIAL"
+      assert html =~ "TRADE"
+
+      # headline + Detail toggle
+      assert html =~ "Catalyst-driven move"
+      assert html =~ "Detail view"
+
+      # Analyze button hidden when analysis present
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
+    test "un-analyzed article shows Analyze button, no pills",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "TSLA"})
+      build_article_for_ticker(ticker, %{title: "Tesla deliveries"})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ ~s|phx-click="analyze"|
+      refute html =~ "Strategy:"
+      refute html =~ "Pump-fade:"
+    end
+
+    test "click Analyze enters analyzing state with skeleton + spinner",
+         %{conn: conn, user: user} do
+      build_trading_profile(%{user_id: user.id})
+
+      test_pid = self()
+
+      # Stub blocks until released — keeps Task pending so we can
+      # observe the analyzing state deterministically
+      MockProvider.stub(fn _msgs, _tools, _opts ->
+        send(test_pid, :ai_called)
+
+        receive do
+          :proceed -> {:ok, %{tool_calls: [], text: nil, usage: %{}}}
+        after
+          5_000 -> {:error, :test_timeout}
+        end
+      end)
+
+      ticker = build_ticker(%{symbol: "BTBD", last_price: Decimal.new("1.82")})
+      article = build_article_for_ticker(ticker, %{title: "BTBD partnership"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      view
+      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+      |> render_click()
+
+      # Wait until the Task actually called AI — proves analyze handler ran
+      # and the Task is in flight
+      assert_receive :ai_called, 1_000
+
+      html = render(view)
+
+      assert html =~ "Analyzing"
+      assert html =~ "loading-spinner"
+      assert html =~ "animate-pulse"
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
+    test "broadcasting :news_analysis_ready replaces button with pills",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "SKYQ"})
+      article = build_article_for_ticker(ticker, %{title: "Sky Quarry RFP"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      # Pre-condition: Analyze button visible
+      assert render(view) =~ ~s|phx-click="analyze"|
+
+      # Build the analysis row (skips the actual analyzer) and broadcast
+      # exactly what the analyzer would send
+      analysis = build_news_analysis(%{article_id: article.id, verdict: :skip})
+      AnalysisEvents.broadcast_analysis_ready(analysis)
+
+      # Sync: wait for LiveView to drain handle_info
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+
+      assert html =~ "SKIP"
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
+    test "click Detail toggle expands the 5 markdown sections",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "BTBD"})
+      article = build_article_for_ticker(ticker, %{title: "BTBD news"})
+
+      build_news_analysis(%{
+        article_id: article.id,
+        detail_summary: "Test summary body.",
+        detail_positives: "- Strong partner\n- Solid balance sheet",
+        detail_concerns: "- Float dilution risk",
+        detail_checklist: "- RVOL > 2x\n- Hold above $1.50",
+        detail_recommendation: "Watch for confirmation."
+      })
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      # Pre-condition: detail section not rendered
+      refute render(view) =~ "Pre-entry checklist"
+
+      view
+      |> element("button[phx-click='toggle_detail'][phx-value-id='#{article.id}']")
+      |> render_click()
+
+      html = render(view)
+
+      assert html =~ "Summary"
+      assert html =~ "Positives"
+      assert html =~ "Concerns"
+      assert html =~ "Pre-entry checklist"
+      assert html =~ "Recommendation"
+
+      # MDEx renders bullet list as <ul><li>…</li></ul>
+      assert html =~ "<li>Strong partner</li>"
+    end
+
+    test "Phase 1 stub fields render with dashed border + tooltip",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "TEST"})
+      article = build_article_for_ticker(ticker, %{title: "Test article"})
+
+      # Fixture omits :pump_fade_risk and :strategy_match → resource
+      # defaults (:insufficient_data and :partial) apply
+      build_news_analysis(%{article_id: article.id})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ "border-dashed"
+      assert html =~ "Phase 1 stub"
     end
   end
 end

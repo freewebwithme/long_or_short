@@ -36,7 +36,8 @@ defmodule LongOrShort.Repo.Migrations.AddTradingProfile do
             prefix: "public",
             on_delete: :restrict,
             on_update: :update_all
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:trading_profiles, [:user_id], name: "trading_profiles_unique_user_index")

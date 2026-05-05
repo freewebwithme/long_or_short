@@ -1,23 +1,36 @@
 defmodule LongOrShortWeb.FeedLive do
   @moduledoc """
-  Real-time news feed page. Subscribes to:
+  Real-time news feed page.
 
-  * `News.Events` — to prepend newly-ingested articles to the stream
-  * `Analysis.Events` — for future analysis-status badges (no events
-    are published until LON-82's `NewsAnalyzer` lands; LON-83 wires
-    the rendering)
+  Subscribes to:
 
-  Articles render as a LiveView stream so the feed doesn't hold an
-  unbounded list in socket assigns. The Analyze button is visible but
-  shows a flash explaining the rebuild is in progress — analysis flow
-  is rebuilt in LON-83.
+    * `News.Events` — prepends newly-ingested articles to the stream
+    * `Analysis.Events.subscribe_for_article/1` — once per article in the
+      stream; delivers `{:news_analysis_ready, _}` after the analyzer
+      finishes
+    * `"prices"` — live last_price ticks
+
+  Analyze flow (LON-83):
+
+    1. User clicks Analyze → `handle_event("analyze", _, _)`
+    2. Article id added to `analyzing_ids` MapSet, card re-rendered with
+       the skeleton loading state
+    3. `Task.Supervisor` spawns `NewsAnalyzer.analyze/2` (non-blocking)
+    4. On success, analyzer broadcasts on `analysis:article:<id>` →
+       `handle_info({:news_analysis_ready, _}, _)` re-fetches the article
+       with `:news_analysis` preloaded and re-inserts it
+    5. On failure, the Task sends `{:analyze_failed, id, reason}` back
+       to this LiveView, which surfaces a flash and resets the card
+
+  Detail toggle is parent-owned via `expanded_ids` MapSet so re-render
+  via `stream_insert` keeps state in sync.
   """
   use LongOrShortWeb, :live_view
 
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
-  alias LongOrShort.News
-  alias LongOrShort.Analysis.Events
+  alias LongOrShort.{News, Analysis}
+  alias LongOrShort.Analysis.NewsAnalyzer
 
   @initial_limit 30
 
@@ -25,7 +38,6 @@ defmodule LongOrShortWeb.FeedLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       News.Events.subscribe()
-      Events.subscribe()
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
     end
 
@@ -34,15 +46,48 @@ defmodule LongOrShortWeb.FeedLive do
     socket =
       socket
       |> assign(:filter, filter)
+      |> assign(:analyzing_ids, MapSet.new())
+      |> assign(:expanded_ids, MapSet.new())
       |> load_articles_with_filter(filter)
 
     {:ok, socket}
   end
 
+  # ── Events ─────────────────────────────────────────────────────────
+
   @impl true
-  def handle_event("analyze", %{"id" => _article_id}, socket) do
-    # LON-83 will rebuild this on top of LON-82's `NewsAnalyzer`.
-    socket = put_flash(socket, :info, "Analyzer rebuild in progress — try again soon.")
+  def handle_event("analyze", %{"id" => article_id}, socket) do
+    actor = socket.assigns.current_user
+
+    case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
+      {:ok, article} ->
+        spawn_analyzer(article, actor, self())
+
+        socket =
+          socket
+          |> update(:analyzing_ids, &MapSet.put(&1, article_id))
+          |> stream_insert(:articles, article)
+
+        {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Article not found.")}
+    end
+  end
+
+  def handle_event("toggle_detail", %{"id" => article_id}, socket) do
+    expanded_ids =
+      if MapSet.member?(socket.assigns.expanded_ids, article_id) do
+        MapSet.delete(socket.assigns.expanded_ids, article_id)
+      else
+        MapSet.put(socket.assigns.expanded_ids, article_id)
+      end
+
+    socket =
+      socket
+      |> assign(:expanded_ids, expanded_ids)
+      |> refresh_card(article_id)
+
     {:noreply, socket}
   end
 
@@ -68,18 +113,23 @@ defmodule LongOrShortWeb.FeedLive do
     {:noreply, socket}
   end
 
+  # ── PubSub & async ────────────────────────────────────────────────
+
+  @impl true
   def handle_info({:price_tick, symbol, price}, socket) do
     {:noreply, push_event(socket, "price_tick", %{symbol: symbol, price: Format.price(price)})}
   end
 
-  @impl true
   def handle_info({:new_article, article}, socket) do
     case News.get_article(article.id,
-           load: [:ticker],
+           load: [:ticker, :news_analysis],
            actor: socket.assigns.current_user
          ) do
       {:ok, article} ->
         if matches_filter?(article, socket.assigns.filter) do
+          # New article in the feed — subscribe so future analyses on it land
+          Analysis.Events.subscribe_for_article(article.id)
+
           socket =
             socket
             |> stream_insert(:articles, article, at: 0)
@@ -94,6 +144,27 @@ defmodule LongOrShortWeb.FeedLive do
         {:noreply, socket}
     end
   end
+
+  def handle_info({:news_analysis_ready, %{article_id: article_id}}, socket) do
+    socket =
+      socket
+      |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
+      |> refresh_card(article_id)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:analyze_failed, article_id, reason}, socket) do
+    socket =
+      socket
+      |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
+      |> refresh_card(article_id)
+      |> put_flash(:error, "Analysis failed: #{format_error(reason)}")
+
+    {:noreply, socket}
+  end
+
+  # ── Render ─────────────────────────────────────────────────────────
 
   @impl true
   def render(assigns) do
@@ -162,7 +233,12 @@ defmodule LongOrShortWeb.FeedLive do
             :for={{dom_id, article} <- @streams.articles}
             id={dom_id}
           >
-            <ArticleComponents.article_card article={article} />
+            <ArticleComponents.article_card
+              article={article}
+              analysis={extract_analysis(article)}
+              analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+              expanded?={MapSet.member?(@expanded_ids, article.id)}
+            />
           </div>
         </div>
       </div>
@@ -184,12 +260,48 @@ defmodule LongOrShortWeb.FeedLive do
       |> maybe_put(:float_max, filter.float_max)
 
     {:ok, articles} =
-      News.list_recent_articles(args, load: [:ticker], actor: actor)
+      News.list_recent_articles(args, load: [:ticker, :news_analysis], actor: actor)
+
+    if connected?(socket) do
+      for article <- articles, do: Analysis.Events.subscribe_for_article(article.id)
+    end
 
     socket
     |> assign(:article_count, length(articles))
     |> stream(:articles, articles, reset: true)
   end
+
+  defp refresh_card(socket, article_id) do
+    case News.get_article(article_id,
+           load: [:ticker, :news_analysis],
+           actor: socket.assigns.current_user
+         ) do
+      {:ok, article} -> stream_insert(socket, :articles, article)
+      {:error, _} -> socket
+    end
+  end
+
+  defp spawn_analyzer(article, actor, parent) do
+    Task.Supervisor.start_child(LongOrShort.Analysis.TaskSupervisor, fn ->
+      case NewsAnalyzer.analyze(article, actor: actor) do
+        {:ok, _analysis} ->
+          # Success delivered via PubSub → handle_info({:news_analysis_ready, _}, _)
+          :ok
+
+        {:error, reason} ->
+          send(parent, {:analyze_failed, article.id, reason})
+      end
+    end)
+  end
+
+  defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a
+  defp extract_analysis(_), do: nil
+
+  defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
+  defp format_error(:no_tool_call), do: "Model returned an unexpected response."
+  defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
+  defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
+  defp format_error(reason), do: inspect(reason)
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
