@@ -48,6 +48,11 @@ defmodule LongOrShort.Accounts.User do
       in MomentumAnalysis. nil until the user (or seed) creates one.
       """
     end
+
+    has_many :watchlist_items, LongOrShort.Tickers.WatchlistItem do
+      public? true
+      description "The trader's personal watchlist entries. Load via Tickers.list_watchlist/2."
+    end
   end
 
   authentication do
