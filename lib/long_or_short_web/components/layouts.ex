@@ -98,8 +98,6 @@ defmodule LongOrShortWeb.Layouts do
           </li>
         </ul>
 
-        <.theme_toggle />
-
         <div :if={@current_user} class="dropdown dropdown-end">
           <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-circle">
             <.icon name="hero-user-circle" class="size-5" />
