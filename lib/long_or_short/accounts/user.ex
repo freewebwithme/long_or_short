@@ -287,5 +287,13 @@ defmodule LongOrShort.Accounts.User do
     bypass AshAuthentication.Checks.AshAuthenticationInteraction do
       authorize_if always()
     end
+
+    # `:change_password` is a custom update action — it isn't covered by the
+    # AshAuthenticationInteraction check above, so we have to authorize it
+    # explicitly. Phase 1: only the user themselves; LON-15 may revisit when
+    # auth hardens.
+    policy action(:change_password) do
+      authorize_if expr(id == ^actor(:id))
+    end
   end
 end

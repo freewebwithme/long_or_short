@@ -94,6 +94,12 @@ defmodule LongOrShort.Accounts.UserProfile do
       upsert_fields [:full_name, :phone, :avatar_url]
     end
 
+    update :update do
+      primary? true
+      require_atomic? false
+      accept [:full_name, :phone, :avatar_url]
+    end
+
     read :get_by_user do
       get? true
       argument :user_id, :uuid, allow_nil?: false

@@ -11,6 +11,7 @@ defmodule LongOrShort.Accounts do
     resource LongOrShort.Accounts.TradingProfile do
       define :create_trading_profile, action: :create
       define :upsert_trading_profile, action: :upsert
+      define :update_trading_profile, action: :update
 
       define :get_trading_profile_by_user,
         action: :get_by_user,
@@ -24,6 +25,7 @@ defmodule LongOrShort.Accounts do
     resource LongOrShort.Accounts.UserProfile do
       define :create_user_profile, action: :create
       define :upsert_user_profile, action: :upsert
+      define :update_user_profile, action: :update
 
       define :get_user_profile_by_user,
         action: :get_by_user,

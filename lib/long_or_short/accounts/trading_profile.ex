@@ -206,6 +206,22 @@ defmodule LongOrShort.Accounts.TradingProfile do
       ]
     end
 
+    update :update do
+      primary? true
+      require_atomic? false
+
+      accept [
+        :trading_style,
+        :time_horizon,
+        :market_cap_focuses,
+        :catalyst_preferences,
+        :notes,
+        :price_min,
+        :price_max,
+        :float_max
+      ]
+    end
+
     read :get_by_user do
       get? true
       argument :user_id, :uuid, allow_nil?: false

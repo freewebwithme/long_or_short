@@ -69,6 +69,39 @@ defmodule LongOrShort.Accounts.UserProfileTest do
     end
   end
 
+  describe "update_user_profile/3" do
+    test "updates editable fields" do
+      user = build_trader_user()
+      profile = build_user_profile(%{user_id: user.id, full_name: "Old"})
+
+      {:ok, updated} =
+        Accounts.update_user_profile(
+          profile,
+          %{full_name: "New", phone: "555-1212"},
+          authorize?: false
+        )
+
+      assert updated.id == profile.id
+      assert updated.full_name == "New"
+      assert updated.phone == "555-1212"
+    end
+
+    test "rejects attrs outside the accept list (e.g. user_id)" do
+      user_a = build_trader_user()
+      user_b = build_trader_user()
+      profile = build_user_profile(%{user_id: user_a.id})
+
+      # user_id is not in the :update accept list — Ash raises NoSuchInput
+      # which is the right protection against ownership tampering.
+      assert {:error, %Ash.Error.Invalid{}} =
+               Accounts.update_user_profile(
+                 profile,
+                 %{full_name: "Renamed", user_id: user_b.id},
+                 authorize?: false
+               )
+    end
+  end
+
   describe "get_user_profile_by_user/2" do
     test "returns the profile for the given user" do
       user = build_trader_user()
