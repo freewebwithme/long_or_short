@@ -1,20 +1,26 @@
 defmodule LongOrShort.Tickers do
   @moduledoc """
-  Tickers domain — master data for tradable symbols.
+  Tickers domain — master data for tradable symbols and per-user watchlists.
 
   This domain owns the canonical record for each symbol (BTBD, AAPL, etc.)
   and is referenced by other domains (News, future Prices) via foreign keys.
+  It also owns `WatchlistItem` — the DB-backed per-user watchlist that
+  replaces the static `priv/tracked_tickers.txt` trader-watchlist semantics.
 
   ## Code interface
 
    All functions accept an `actor:` option and will be authorized against
-   `LongOrShort.Tickers.Ticker` policies.
+   the relevant resource's policies.
 
        Tickers.list_active_tickers(actor: current_user)
        Tickers.upsert_ticker_by_symbol(
          %{symbol: "BTBD"},
          actor: SystemActor.new()
        )
+
+       Tickers.add_to_watchlist(%{user_id: user.id, ticker_id: ticker.id}, actor: user)
+       Tickers.remove_from_watchlist(item_id, actor: user)
+       Tickers.list_watchlist(user.id, actor: user)
   """
 
   use Ash.Domain
@@ -31,6 +37,12 @@ defmodule LongOrShort.Tickers do
       define :list_tickers, action: :read
       define :destroy_ticker, action: :destroy
       define :search_tickers, action: :search, args: [:query]
+    end
+
+    resource LongOrShort.Tickers.WatchlistItem do
+      define :add_to_watchlist, action: :add
+      define :remove_from_watchlist, action: :destroy
+      define :list_watchlist, action: :list_for_user, args: [:user_id]
     end
   end
 end
