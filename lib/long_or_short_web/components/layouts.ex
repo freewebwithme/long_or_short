@@ -74,6 +74,17 @@ defmodule LongOrShortWeb.Layouts do
               Feed
             </.link>
           </li>
+          <li>
+            <.link
+              navigate={~p"/analyze"}
+              class={[
+                "btn btn-ghost btn-sm",
+                String.starts_with?(@current_path || "", "/analyze") && "btn-active"
+              ]}
+            >
+              Analyze
+            </.link>
+          </li>
         </ul>
 
         <.theme_toggle />

@@ -14,6 +14,7 @@ defmodule LongOrShortWeb.DashboardLive do
   alias LongOrShort.Tickers.Watchlist
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
+  alias LongOrShortWeb.Live.Components.TickerAutocomplete
 
   @news_limit 10
 
@@ -263,48 +264,7 @@ defmodule LongOrShortWeb.DashboardLive do
     ~H"""
     <section id="dash-search" class="card bg-base-200 border border-base-300 p-4">
       <h2 class="font-semibold mb-3">Ticker search</h2>
-
-      <form phx-change="search" phx-submit="search" autocomplete="off">
-        <div class="relative">
-          <input
-            type="text"
-            name="query"
-            value={@query}
-            placeholder="Symbol or company"
-            phx-debounce="200"
-            class="input input-sm input-bordered w-full pr-8"
-          />
-          <button
-            :if={@query != ""}
-            type="button"
-            phx-click="clear_search"
-            class="absolute right-1 top-1 btn btn-ghost btn-xs btn-circle"
-            aria-label="Clear search"
-          >
-            <.icon name="hero-x-mark" class="size-3" />
-          </button>
-        </div>
-      </form>
-
-      <ul :if={@results != []} class="mt-2 divide-y divide-base-300 text-sm">
-        <li :for={ticker <- @results}>
-          <button
-            type="button"
-            phx-click="select_ticker"
-            phx-value-symbol={ticker.symbol}
-            class="w-full text-left p-2 hover:bg-base-300 rounded"
-          >
-            <div class="font-bold">{ticker.symbol}</div>
-            <div :if={ticker.company_name} class="text-xs opacity-60 truncate">
-              {ticker.company_name}
-            </div>
-          </button>
-        </li>
-      </ul>
-
-      <div :if={@query != "" && @results == []} class="text-xs opacity-60 mt-2 italic">
-        No matches
-      </div>
+      <TickerAutocomplete.ticker_autocomplete query={@query} results={@results} />
     </section>
     """
   end
