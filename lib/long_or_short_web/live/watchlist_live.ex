@@ -21,6 +21,7 @@ defmodule LongOrShortWeb.WatchlistLive do
   use LongOrShortWeb, :live_view
 
   alias LongOrShort.Tickers
+  alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Layouts
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
 
@@ -83,6 +84,7 @@ defmodule LongOrShortWeb.WatchlistLive do
            {:ok, item} <-
              Tickers.add_to_watchlist(%{user_id: actor.id, ticker_id: ticker.id}, actor: actor) do
         item_with_ticker = %{item | ticker: ticker}
+        WatchlistEvents.broadcast_changed(actor.id)
 
         {:noreply,
          socket
@@ -118,6 +120,8 @@ defmodule LongOrShortWeb.WatchlistLive do
       item ->
         case Tickers.remove_from_watchlist(item, actor: actor) do
           :ok ->
+            WatchlistEvents.broadcast_changed(actor.id)
+
             {:noreply,
              assign(socket, :items, Enum.reject(socket.assigns.items, &(&1.id == item_id)))}
 

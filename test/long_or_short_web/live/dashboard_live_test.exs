@@ -6,6 +6,7 @@ defmodule LongOrShortWeb.DashboardLiveTest do
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
   alias LongOrShort.News
+  alias LongOrShort.Tickers.WatchlistEvents
 
   defp log_in_user(conn, user) do
     conn
@@ -26,26 +27,24 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       {:ok, conn: conn, user: user}
     end
 
-    test "renders the four placeholder cards", %{conn: conn} do
+    test "renders the primary placeholder cards", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
       assert html =~ ~s|id="dash-search"|
       assert html =~ ~s|id="dash-indices"|
       assert html =~ ~s|id="dash-news"|
       assert html =~ ~s|id="dash-watchlist"|
+      assert html =~ ~s|id="dash-all-news"|
       assert html =~ "Ticker search"
       assert html =~ "Major indices"
-      assert html =~ "Latest news"
+      assert html =~ "All news"
       assert html =~ "Watchlist"
     end
 
     test "nav highlights Dashboard as active", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # Dashboard link has btn-active
       assert html =~ ~r|href="/"[^>]*btn-active[^>]*>\s*Dashboard|
-
-      # Feed link does NOT have btn-active
       refute html =~ ~r|href="/feed"[^>]*btn-active|
     end
   end
@@ -57,9 +56,14 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       {:ok, conn: conn, user: user}
     end
 
-    test "renders symbols from watchlist with PriceLabel hooks", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, ~w(AAPL TSLA))
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
+    test "renders symbols from the user's DB watchlist with PriceLabel hooks", %{
+      conn: conn,
+      user: user
+    } do
+      aapl = build_ticker(%{symbol: "AAPL"})
+      tsla = build_ticker(%{symbol: "TSLA"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: aapl.id})
+      build_watchlist_item(%{user_id: user.id, ticker_id: tsla.id})
 
       {:ok, _view, html} = live(conn, ~p"/")
 
@@ -69,22 +73,21 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert html =~ ~s|data-symbol="TSLA"|
     end
 
-    test "shows initial price when ticker has last_price", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, ["WLTEST"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
-
-      build_ticker(%{symbol: "WLTEST", last_price: Decimal.new("42.50")})
+    test "shows initial price when ticker has last_price", %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "WLTEST", last_price: Decimal.new("42.50")})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
 
       {:ok, _view, html} = live(conn, ~p"/")
 
       assert html =~ ~s|data-initial-price="42.50"|
     end
 
-    test "leaves data-initial-price empty when ticker missing or no last_price", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, ["NOPRICE"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
-
-      build_ticker(%{symbol: "NOPRICE"})
+    test "leaves data-initial-price empty when ticker has no last_price", %{
+      conn: conn,
+      user: user
+    } do
+      ticker = build_ticker(%{symbol: "NOPRICE"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
 
       {:ok, _view, html} = live(conn, ~p"/")
 
@@ -92,11 +95,9 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert html =~ ~s|data-initial-price=""|
     end
 
-    test "pushes price_tick event on PubSub broadcast", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, ["WLTEST"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
-
-      build_ticker(%{symbol: "WLTEST"})
+    test "pushes price_tick event on PubSub broadcast", %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "WLTEST"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
 
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -109,26 +110,11 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert_push_event view, "price_tick", %{symbol: "WLTEST", price: "99.99"}
     end
 
-    test "empty state when watchlist is empty", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, [])
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
-
+    test "empty state links to /watchlist when watchlist is empty", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      assert html =~ "Add symbols to"
-      assert html =~ "tracked_tickers.txt"
-    end
-
-    test "renders symbols from watchlist with price labels", %{conn: conn} do
-      Application.put_env(:long_or_short, :tracked_tickers_override, ~w(AAPL TSLA))
-      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
-
-      {:ok, _view, html} = live(conn, ~p"/")
-
-      assert html =~ "AAPL"
-      assert html =~ "TSLA"
-      assert html =~ ~s|data-symbol="AAPL"|
-      assert html =~ ~s|data-symbol="TSLA"|
+      assert html =~ "Add tickers on"
+      assert html =~ ~s|href="/watchlist"|
     end
   end
 
@@ -195,18 +181,16 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       |> element("button[phx-click='select_ticker'][phx-value-symbol='CLRSYM']")
       |> render_click()
 
-      # Info panel shows ticker company name
       assert render(view) =~ "Clear Corp"
 
       html = render_click(view, "clear_search")
 
-      # Info panel placeholder restored; company name (info panel only) is gone
       refute html =~ "Clear Corp"
       assert html =~ "Search and select a ticker"
     end
   end
 
-  describe "news widget" do
+  describe "all news widget" do
     setup %{conn: conn} do
       user = build_trader_user()
       conn = log_in_user(conn, user)
@@ -263,7 +247,111 @@ defmodule LongOrShortWeb.DashboardLiveTest do
 
     test "empty state when no articles", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
+      assert html =~ "All news"
       assert html =~ "No news yet"
+    end
+  end
+
+  describe "watchlist news widget" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "is hidden when watchlist is empty", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      refute html =~ ~s|id="dash-watchlist-news"|
+      refute html =~ "My watchlist news"
+    end
+
+    test "renders articles only for watchlist tickers", %{conn: conn, user: user} do
+      in_watchlist = build_ticker(%{symbol: "INWL"})
+      not_in_watchlist = build_ticker(%{symbol: "NOTWL"})
+
+      build_watchlist_item(%{user_id: user.id, ticker_id: in_watchlist.id})
+
+      build_article_for_ticker(in_watchlist, %{title: "Watchlist hit"})
+      build_article_for_ticker(not_in_watchlist, %{title: "Not in watchlist"})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      # The watchlist news card section contains only the matching article.
+      [_, watchlist_section] = String.split(html, ~s|id="dash-watchlist-news"|)
+      assert watchlist_section =~ "Watchlist hit"
+      refute watchlist_section =~ "Not in watchlist"
+    end
+
+    test "appends new article on broadcast when ticker is in watchlist", %{
+      conn: conn,
+      user: user
+    } do
+      ticker = build_ticker(%{symbol: "WLNEW"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      article = build_article_for_ticker(ticker, %{title: "Live watchlist news"})
+      {:ok, article} = News.get_article(article.id, load: [:ticker], authorize?: false)
+      News.Events.broadcast_new_article(article)
+
+      html = render(view)
+      [_, watchlist_section] = String.split(html, ~s|id="dash-watchlist-news"|)
+      assert watchlist_section =~ "Live watchlist news"
+    end
+
+    test "ignores broadcast when article ticker is not in watchlist", %{conn: conn, user: user} do
+      ticker_in = build_ticker(%{symbol: "WLIN"})
+      ticker_out = build_ticker(%{symbol: "WLOUT"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker_in.id})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      article = build_article_for_ticker(ticker_out, %{title: "Outside news"})
+      {:ok, article} = News.get_article(article.id, load: [:ticker], authorize?: false)
+      News.Events.broadcast_new_article(article)
+
+      html = render(view)
+      [_, watchlist_section] = String.split(html, ~s|id="dash-watchlist-news"|)
+      refute watchlist_section =~ "Outside news"
+    end
+  end
+
+  describe "watchlist_changed PubSub" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "refreshes watchlist when broadcast received", %{conn: conn, user: user} do
+      {:ok, view, html} = live(conn, ~p"/")
+      refute html =~ "REFRESHED"
+
+      ticker = build_ticker(%{symbol: "REFRESHED"})
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
+      WatchlistEvents.broadcast_changed(user.id)
+
+      assert render(view) =~ "REFRESHED"
+    end
+
+    test "starts rendering watchlist news card after first ticker added", %{
+      conn: conn,
+      user: user
+    } do
+      ticker = build_ticker(%{symbol: "POSTADD"})
+      build_article_for_ticker(ticker, %{title: "Post-add news"})
+
+      {:ok, view, html} = live(conn, ~p"/")
+      refute html =~ ~s|id="dash-watchlist-news"|
+
+      build_watchlist_item(%{user_id: user.id, ticker_id: ticker.id})
+      WatchlistEvents.broadcast_changed(user.id)
+
+      html = render(view)
+      assert html =~ ~s|id="dash-watchlist-news"|
+      assert html =~ "Post-add news"
     end
   end
 

@@ -315,6 +315,22 @@ defmodule LongOrShort.News.Article do
       prepare build(limit: arg(:limit))
     end
 
+    read :recent_for_tickers do
+      description """
+      Articles whose ticker_id is in the given list, newest first.
+      Used by the dashboard's "My watchlist news" widget to filter
+      to the trader's watchlist tickers in a single query.
+      """
+
+      argument :ticker_ids, {:array, :uuid}, allow_nil?: false
+      argument :limit, :integer, default: 10
+
+      filter expr(ticker_id in ^arg(:ticker_ids))
+
+      prepare build(sort: [published_at: :desc])
+      prepare build(limit: arg(:limit))
+    end
+
     read :get_content_hash do
       argument :source, :atom, allow_nil?: false
       argument :external_id, :string, allow_nil?: false
