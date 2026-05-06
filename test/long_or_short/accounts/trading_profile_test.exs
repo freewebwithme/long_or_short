@@ -129,6 +129,53 @@ defmodule LongOrShort.Accounts.TradingProfileTest do
     end
   end
 
+  describe "update_trading_profile/3" do
+    test "updates editable fields" do
+      user = build_trader_user()
+      profile = build_trading_profile(%{user_id: user.id, trading_style: :momentum_day})
+
+      {:ok, updated} =
+        Accounts.update_trading_profile(
+          profile,
+          %{trading_style: :swing, notes: "shifted to swing"},
+          authorize?: false
+        )
+
+      assert updated.id == profile.id
+      assert updated.trading_style == :swing
+      assert updated.notes == "shifted to swing"
+    end
+
+    test "rejects attrs outside the accept list (e.g. user_id)" do
+      user_a = build_trader_user()
+      user_b = build_trader_user()
+      profile = build_trading_profile(%{user_id: user_a.id})
+
+      # user_id is not in the :update accept list — Ash raises NoSuchInput
+      # which is the right protection against ownership tampering.
+      assert {:error, %Ash.Error.Invalid{}} =
+               Accounts.update_trading_profile(
+                 profile,
+                 %{notes: "tweaked", user_id: user_b.id},
+                 authorize?: false
+               )
+    end
+
+    test "rejects invalid trading_style" do
+      user = build_trader_user()
+      profile = build_trading_profile(%{user_id: user.id})
+
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Accounts.update_trading_profile(
+                 profile,
+                 %{trading_style: :bogus},
+                 authorize?: false
+               )
+
+      assert error_on_field?(error, :trading_style)
+    end
+  end
+
   describe "get_trading_profile_by_user/2" do
     test "returns the profile for the given user" do
       user = build_trader_user()
