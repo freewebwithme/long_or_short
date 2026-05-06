@@ -85,6 +85,17 @@ defmodule LongOrShortWeb.Layouts do
               Analyze
             </.link>
           </li>
+          <li>
+            <.link
+              navigate={~p"/watchlist"}
+              class={[
+                "btn btn-ghost btn-sm",
+                @current_path == "/watchlist" && "btn-active"
+              ]}
+            >
+              Watchlist
+            </.link>
+          </li>
         </ul>
 
         <.theme_toggle />
