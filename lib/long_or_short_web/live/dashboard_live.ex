@@ -2,18 +2,25 @@ defmodule LongOrShortWeb.DashboardLive do
   @moduledoc """
   Dashboard skeleton — landing for authenticated users.
 
-  Composes four widgets: ticker search, indices, condensed news,
-  watchlist quick view. Search/indices/news still placeholder cards;
-  watchlist quick view reads from the file-backed ingestion universe
-  (`LongOrShort.Tickers.Tracked` / LON-64) with live prices via the
-  shared `PriceLabel` hook (LON-60). LON-94 will rewire this to the
-  per-user DB watchlist.
+  Composes four primary widgets: ticker search, indices, watchlist
+  quick view, and split news widgets. The watchlist reads from the
+  per-user DB-backed `Tickers.WatchlistItem` resource (LON-92). The
+  news area shows two cards: "All news" (global ingestion universe)
+  and "My watchlist news" (filtered to the trader's tickers).
+
+  ## Subscriptions
+
+    * `"prices"` — live last_price ticks fan out to the PriceLabel hook
+    * `News.Events` — newly-ingested articles
+    * `Indices.Events` — index ticks (DJIA / NASDAQ-100 / S&P 500)
+    * `WatchlistEvents.subscribe(user_id)` — `:watchlist_changed`
+      refreshes the watchlist + watchlist news without a manual reload
   """
   use LongOrShortWeb, :live_view
 
   alias LongOrShort.{Indices, News, Tickers}
   alias LongOrShort.Analysis.Events
-  alias LongOrShort.Tickers.Tracked
+  alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
@@ -22,20 +29,25 @@ defmodule LongOrShortWeb.DashboardLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    actor = socket.assigns.current_user
+
     if connected?(socket) do
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
       News.Events.subscribe()
       Events.subscribe()
       Indices.Events.subscribe()
+      WatchlistEvents.subscribe(actor.id)
     end
 
-    actor = socket.assigns.current_user
-    news = load_news(actor)
+    watchlist = load_watchlist(actor)
+    ticker_ids = watchlist_ticker_id_set(watchlist)
 
     socket =
       socket
-      |> assign(:watchlist, load_watchlist(actor))
-      |> assign(:news, news)
+      |> assign(:watchlist, watchlist)
+      |> assign(:watchlist_ticker_ids, ticker_ids)
+      |> assign(:news, load_news(actor))
+      |> assign(:watchlist_news, load_watchlist_news(ticker_ids, actor))
       |> assign(:active_news, [])
       |> assign(:search_query, "")
       |> assign(:search_results, [])
@@ -118,11 +130,34 @@ defmodule LongOrShortWeb.DashboardLive do
           [article | socket.assigns.news]
           |> Enum.take(@news_limit)
 
-        {:noreply, assign(socket, :news, news)}
+        watchlist_news =
+          if MapSet.member?(socket.assigns.watchlist_ticker_ids, article.ticker_id) do
+            [article | socket.assigns.watchlist_news]
+            |> Enum.take(@news_limit)
+          else
+            socket.assigns.watchlist_news
+          end
+
+        {:noreply,
+         socket
+         |> assign(:news, news)
+         |> assign(:watchlist_news, watchlist_news)}
 
       {:error, _} ->
         {:noreply, socket}
     end
+  end
+
+  def handle_info({:watchlist_changed, _user_id}, socket) do
+    actor = socket.assigns.current_user
+    watchlist = load_watchlist(actor)
+    ticker_ids = watchlist_ticker_id_set(watchlist)
+
+    {:noreply,
+     socket
+     |> assign(:watchlist, watchlist)
+     |> assign(:watchlist_ticker_ids, ticker_ids)
+     |> assign(:watchlist_news, load_watchlist_news(ticker_ids, actor))}
   end
 
   def handle_info({:index_tick, label, payload}, socket) do
@@ -150,8 +185,14 @@ defmodule LongOrShortWeb.DashboardLive do
             />
           </div>
         </div>
-        <!-- Bottom: global latest news -->
-        <.global_news_card news={@news} />
+        <!-- Bottom: split news widgets -->
+        <div class={[
+          "grid grid-cols-1 gap-4",
+          @watchlist != [] && "lg:grid-cols-2"
+        ]}>
+          <.all_news_card news={@news} />
+          <.watchlist_news_card :if={@watchlist != []} news={@watchlist_news} />
+        </div>
       </div>
     </Layouts.app>
     """
@@ -279,7 +320,7 @@ defmodule LongOrShortWeb.DashboardLive do
       <h2 class="font-semibold mb-3">Watchlist</h2>
 
       <div :if={@watchlist == []} class="italic text-xs opacity-60">
-        Add symbols to <code>priv/tracked_tickers.txt</code>
+        Add tickers on <.link navigate={~p"/watchlist"} class="underline">/watchlist</.link>
       </div>
 
       <ul
@@ -287,11 +328,13 @@ defmodule LongOrShortWeb.DashboardLive do
         class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5 text-sm"
       >
         <li :for={item <- @watchlist} class="flex items-center justify-between">
-          <.link navigate={~p"/feed"} class="font-bold hover:underline">{item.symbol}</.link>
+          <.link navigate={~p"/feed"} class="font-bold hover:underline">
+            {item.ticker.symbol}
+          </.link>
           <ArticleComponents.price_label
-            id={"watchlist-price-#{item.symbol}"}
-            symbol={item.symbol}
-            initial_price={item.last_price}
+            id={"watchlist-price-#{item.ticker.symbol}"}
+            symbol={item.ticker.symbol}
+            initial_price={item.ticker.last_price}
             class="opacity-60 tabular-nums"
           />
         </li>
@@ -302,10 +345,10 @@ defmodule LongOrShortWeb.DashboardLive do
 
   attr :news, :list, required: true
 
-  defp global_news_card(assigns) do
+  defp all_news_card(assigns) do
     ~H"""
-    <section id="dash-global-news" class="card bg-base-200 border border-base-300 p-4">
-      <h2 class="font-semibold mb-3">Latest news</h2>
+    <section id="dash-all-news" class="card bg-base-200 border border-base-300 p-4">
+      <h2 class="font-semibold mb-3">All news</h2>
 
       <div :if={@news == []} class="italic text-xs opacity-60">
         No news yet
@@ -315,7 +358,29 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
-          context="global"
+          context="all"
+        />
+      </div>
+    </section>
+    """
+  end
+
+  attr :news, :list, required: true
+
+  defp watchlist_news_card(assigns) do
+    ~H"""
+    <section id="dash-watchlist-news" class="card bg-base-200 border border-base-300 p-4">
+      <h2 class="font-semibold mb-3">My watchlist news</h2>
+
+      <div :if={@news == []} class="italic text-xs opacity-60">
+        No news for your watchlist tickers yet.
+      </div>
+
+      <div :if={@news != []} class="space-y-2">
+        <ArticleComponents.article_card
+          :for={article <- @news}
+          article={article}
+          context="watchlist"
         />
       </div>
     </section>
@@ -326,18 +391,36 @@ defmodule LongOrShortWeb.DashboardLive do
   # ── helpers ─────────────────────────────────────────────────────
 
   defp load_watchlist(actor) do
-    Enum.map(Tracked.symbols(), fn symbol ->
-      case Tickers.get_ticker_by_symbol(symbol, actor: actor) do
-        {:ok, ticker} -> %{symbol: symbol, last_price: ticker.last_price}
-        _ -> %{symbol: symbol, last_price: nil}
-      end
-    end)
+    case Tickers.list_watchlist(actor.id, actor: actor) do
+      {:ok, items} -> items
+      _ -> []
+    end
+  end
+
+  defp watchlist_ticker_id_set(watchlist) do
+    watchlist
+    |> Enum.map(& &1.ticker_id)
+    |> MapSet.new()
   end
 
   defp load_news(actor) do
     case News.list_recent_articles(%{limit: @news_limit}, load: [:ticker], actor: actor) do
       {:ok, articles} -> articles
       _ -> []
+    end
+  end
+
+  defp load_watchlist_news(ticker_ids, actor) do
+    if MapSet.size(ticker_ids) == 0 do
+      []
+    else
+      case News.list_recent_articles_for_tickers(MapSet.to_list(ticker_ids),
+             load: [:ticker],
+             actor: actor
+           ) do
+        {:ok, articles} -> articles
+        _ -> []
+      end
     end
   end
 

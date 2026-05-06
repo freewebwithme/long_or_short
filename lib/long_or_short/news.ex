@@ -28,6 +28,10 @@ defmodule LongOrShort.News do
         action: :recent_for_ticker,
         args: [:ticker_id, :since]
 
+      define :list_recent_articles_for_tickers,
+        action: :recent_for_tickers,
+        args: [:ticker_ids]
+
       define :list_articles_by_ticker_symbol, action: :by_ticker_symbol, args: [:symbol]
     end
   end
