@@ -57,6 +57,6 @@ config :long_or_short, :ai_provider, LongOrShort.AI.MockProvider
 config :long_or_short, LongOrShort.AI.Providers.Claude,
   req_plug: {Req.Test, LongOrShort.AI.Providers.Claude}
 
-config :long_or_short, :watchlist_override, ~w(AAPL TSLA)
+config :long_or_short, :tracked_tickers_override, ~w(AAPL TSLA)
 
 config :long_or_short, :enable_price_stream, false

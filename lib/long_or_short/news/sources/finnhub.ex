@@ -3,20 +3,20 @@ defmodule LongOrShort.News.Sources.Finnhub do
   Finnhub company-news feeder.
 
   Polls `/api/v1/company-news` for each symbol in
-  `LongOrShort.Tickers.Watchlist` every 60 seconds (free tier:
-  60 calls/min). Each poll fetches the last 3 days of news per
-  symbol. The `related` field is a single ticker string — no
-  splitting needed.
+  `LongOrShort.Tickers.Tracked` (the ingestion universe) every 60 seconds
+  (free tier: 60 calls/min). Each poll fetches the last 3 days of news per
+  symbol. The `related` field is a single ticker string — no splitting needed.
 
-  LON-36 will swap the watchlist source for a per-user DB-backed
-  list; this module's call site stays the same.
+  LON-90 (Sub-4) will rewire the dashboard widgets to read from the
+  per-user DB-backed watchlist instead; this module continues to poll the
+  full ingestion universe.
   """
 
   use GenServer
   @behaviour LongOrShort.News.Source
 
   alias LongOrShort.News.Sources.Pipeline
-  alias LongOrShort.Tickers.Watchlist
+  alias LongOrShort.Tickers.Tracked
 
   @base_url "https://finnhub.io/api/v1/company-news"
 
@@ -39,7 +39,7 @@ defmodule LongOrShort.News.Sources.Finnhub do
   @impl LongOrShort.News.Source
   def fetch_news(state) do
     api_key = Application.get_env(:long_or_short, :finnhub_api_key)
-    symbols = Watchlist.symbols()
+    symbols = Tracked.symbols()
 
     from =
       case LongOrShort.Sources.get_source_state(:finnhub, authorize?: false) do

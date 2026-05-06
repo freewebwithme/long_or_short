@@ -56,16 +56,16 @@ destroy_ticker/1
 - `bypass actor_attribute_equals(:role, :admin)` — admin full access
 - Authenticated traders read-only; unauthenticated forbidden
 
-### `Tickers.Watchlist`
+### `Tickers.Tracked`
 
-`lib/long_or_short/tickers/watchlist.ex` — pure module, no persistence (LON-64)
+`lib/long_or_short/tickers/tracked.ex` — pure module, no persistence (LON-64 / renamed LON-91)
 
-- `symbols/0` — reads `priv/watchlist.txt` (one symbol per line; `#`-prefixed comments ignored)
-- Override via `:watchlist_override` env (list of symbols) for tests
-- File path: `Application.app_dir(:long_or_short, "priv/watchlist.txt")`
+- `symbols/0` — reads `priv/tracked_tickers.txt` (one symbol per line; `#`-prefixed comments ignored)
+- Override via `:tracked_tickers_override` env (list of symbols) for tests
+- File path: `Application.app_dir(:long_or_short, "priv/tracked_tickers.txt")`
 - Used by: `FinnhubStream`, `FinnhubProfileSync`, `IndicesPoller`, `DashboardLive`
 
-Replaces the earlier `:finnhub_watch_symbols` config approach. DB-backed watchlist (LON-36) is deferred until a settings UI is needed.
+This is the **ingestion universe** — tickers we poll for news/profile data, bounded by free-tier rate limits. The per-user dynamic watchlist (LON-90 / LON-92) is a separate DB-backed resource.
 
 ### `Tickers.Sources.FinnhubStream`
 

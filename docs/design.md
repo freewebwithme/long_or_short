@@ -148,17 +148,17 @@ This document captures the *why* behind significant choices. New decisions shoul
 
 ---
 
-## 2026-04 — File-backed watchlist over config or DB (LON-64)
+## 2026-04 — File-backed ingestion universe over config or DB (LON-64, renamed LON-91)
 
-**Decision**: The single source of truth for "which symbols do we care about" is `priv/watchlist.txt` — one symbol per line, `#` comments allowed. A pure module (`Tickers.Watchlist`) reads it on demand.
+**Decision**: The single source of truth for "which symbols does the system poll" is `priv/tracked_tickers.txt` — one symbol per line, `#` comments allowed. A pure module (`Tickers.Tracked`) reads it on demand.
 
 **Rationale**:
 - The earlier `:finnhub_watch_symbols` config approach required a code release to add a symbol — friction during MVP exploration.
-- A DB-backed `Watchlist` resource (LON-36) would solve that, but it pulls in a settings UI, multi-user scoping, and authorization questions. Premature for solo use.
-- A file in `priv/` is editable from any text editor, survives restarts, deployable as a config artifact, and lets every consumer (`FinnhubStream`, `IndicesPoller`, `FinnhubProfileSync`, `DashboardLive`) call `Watchlist.symbols/0` without coordinating reads.
-- Tests override via `:watchlist_override` env (list of symbols).
+- A DB-backed watchlist resource would solve that, but pulls in a settings UI, multi-user scoping, and authorization questions. Premature for solo use at the time.
+- A file in `priv/` is editable from any text editor, survives restarts, deployable as a config artifact, and lets every consumer (`FinnhubStream`, `IndicesPoller`, `FinnhubProfileSync`, `DashboardLive`) call `Tracked.symbols/0` without coordinating reads.
+- Tests override via `:tracked_tickers_override` env (list of symbols).
 
-**Migration path**: When LON-36 lands, swap the body of `Watchlist.symbols/0` to read from the DB resource — no callers change.
+**LON-91 note**: The file and module were renamed from `watchlist` → `tracked_tickers` / `Tracked` to clarify that this is the **ingestion universe**, not the trader's personal watchlist. The per-user dynamic watchlist ships as a separate DB resource (LON-90 / LON-92).
 
 ---
 
