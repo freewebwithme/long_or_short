@@ -53,6 +53,15 @@ defmodule LongOrShort.Accounts.User do
       public? true
       description "The trader's personal watchlist entries. Load via Tickers.list_watchlist/2."
     end
+
+    has_one :user_profile, LongOrShort.Accounts.UserProfile do
+      public? true
+
+      description """
+      Personal profile — display name, contact info, avatar (LON-97).
+      nil until the user fills it in via /profile.
+      """
+    end
   end
 
   authentication do

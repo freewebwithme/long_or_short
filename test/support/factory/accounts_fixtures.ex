@@ -88,4 +88,48 @@ defmodule LongOrShort.AccountsFixtures do
         """
     end
   end
+
+  @doc """
+  Default attributes for a UserProfile (LON-97). All fields are
+  nullable; the defaults below populate them so tests can exercise
+  the full surface. Caller supplies `:user_id` separately via
+  overrides.
+  """
+  def valid_user_profile_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        full_name: "Test Trader",
+        phone: "555-0100",
+        avatar_url: "https://example.com/avatar.png"
+      },
+      overrides
+    )
+  end
+
+  @doc """
+  Builds a UserProfile via the `:create` action. Lazily creates a
+  trader user if `:user_id` is not supplied.
+  """
+  def build_user_profile(overrides \\ %{}) do
+    user_id =
+      Map.get_lazy(overrides, :user_id, fn -> build_trader_user().id end)
+
+    attrs =
+      overrides
+      |> Map.delete(:user_id)
+      |> valid_user_profile_attrs()
+      |> Map.put(:user_id, user_id)
+
+    case LongOrShort.Accounts.create_user_profile(attrs, authorize?: false) do
+      {:ok, profile} ->
+        profile
+
+      {:error, error} ->
+        raise """
+        Failed to create user_profile fixture.
+        attrs: #{inspect(attrs)}
+        error: #{inspect(error)}
+        """
+    end
+  end
 end
