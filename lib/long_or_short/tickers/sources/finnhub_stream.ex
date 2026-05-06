@@ -2,7 +2,7 @@ defmodule LongOrShort.Tickers.Sources.FinnhubStream do
   @moduledoc """
   WebSocket client for Finnhub real-time trade ticks.
 
-  Subscribes to every symbol in `LongOrShort.Tickers.Watchlist` on
+  Subscribes to every symbol in `LongOrShort.Tickers.Tracked` on
   connect. On each `type: "trade"` frame, the matching ticker's
   `last_price` is updated via `Tickers.update_ticker_price/2` and a
   `{:price_tick, symbol, decimal_price}` message is broadcast on
@@ -28,7 +28,7 @@ defmodule LongOrShort.Tickers.Sources.FinnhubStream do
   require Logger
 
   alias LongOrShort.Tickers
-  alias LongOrShort.Tickers.Watchlist
+  alias LongOrShort.Tickers.Tracked
 
   @url "wss://ws.finnhub.io"
   @topic "prices"
@@ -48,7 +48,7 @@ defmodule LongOrShort.Tickers.Sources.FinnhubStream do
   end
 
   defp do_start(api_key) do
-    symbols = Watchlist.symbols()
+    symbols = Tracked.symbols()
 
     WebSockex.start_link(
       "#{@url}?token=#{api_key}",

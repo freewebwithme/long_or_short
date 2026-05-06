@@ -4,14 +4,16 @@ defmodule LongOrShortWeb.DashboardLive do
 
   Composes four widgets: ticker search, indices, condensed news,
   watchlist quick view. Search/indices/news still placeholder cards;
-  watchlist is wired to the file-backed watchlist (LON-64) with live
-  prices via the shared `PriceLabel` hook (LON-60).
+  watchlist quick view reads from the file-backed ingestion universe
+  (`LongOrShort.Tickers.Tracked` / LON-64) with live prices via the
+  shared `PriceLabel` hook (LON-60). LON-94 will rewire this to the
+  per-user DB watchlist.
   """
   use LongOrShortWeb, :live_view
 
   alias LongOrShort.{Indices, News, Tickers}
   alias LongOrShort.Analysis.Events
-  alias LongOrShort.Tickers.Watchlist
+  alias LongOrShort.Tickers.Tracked
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
@@ -277,7 +279,7 @@ defmodule LongOrShortWeb.DashboardLive do
       <h2 class="font-semibold mb-3">Watchlist</h2>
 
       <div :if={@watchlist == []} class="italic text-xs opacity-60">
-        Add symbols to <code>priv/watchlist.txt</code>
+        Add symbols to <code>priv/tracked_tickers.txt</code>
       </div>
 
       <ul
@@ -324,7 +326,7 @@ defmodule LongOrShortWeb.DashboardLive do
   # ── helpers ─────────────────────────────────────────────────────
 
   defp load_watchlist(actor) do
-    Enum.map(Watchlist.symbols(), fn symbol ->
+    Enum.map(Tracked.symbols(), fn symbol ->
       case Tickers.get_ticker_by_symbol(symbol, actor: actor) do
         {:ok, ticker} -> %{symbol: symbol, last_price: ticker.last_price}
         _ -> %{symbol: symbol, last_price: nil}

@@ -205,7 +205,7 @@ LiveView is the only frontend — no separate JS framework. Tailwind + daisyUI f
 `DashboardLive` renders six widgets (helper functions, not LiveComponents):
 
 - **indices_card** — DJIA / NASDAQ-100 / S&P 500 tiles with live %change
-- **watchlist_card** — symbols from `priv/watchlist.txt` with live prices
+- **watchlist_card** — symbols from `priv/tracked_tickers.txt` with live prices (LON-94 will rewire to the per-user DB watchlist)
 - **search_card** — debounced ticker search with autocomplete
 - **ticker_info_card** — selected ticker details + live last_price
 - **ticker_news_card** — articles for selected ticker

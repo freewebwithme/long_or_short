@@ -53,10 +53,10 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
   end
 
   defp run_sync(api_key) do
-    symbols = LongOrShort.Tickers.Watchlist.symbols()
+    symbols = LongOrShort.Tickers.Tracked.symbols()
     total = length(symbols)
 
-    Logger.info("FinnhubProfileSync: starting sync for #{total} watchlist symbols")
+    Logger.info("FinnhubProfileSync: starting sync for #{total} tracked symbols")
 
     {ok_count, err_count} =
       symbols

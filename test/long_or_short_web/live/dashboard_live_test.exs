@@ -58,8 +58,8 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
 
     test "renders symbols from watchlist with PriceLabel hooks", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, ~w(AAPL TSLA))
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, ~w(AAPL TSLA))
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       {:ok, _view, html} = live(conn, ~p"/")
 
@@ -70,8 +70,8 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
 
     test "shows initial price when ticker has last_price", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, ["WLTEST"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, ["WLTEST"])
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       build_ticker(%{symbol: "WLTEST", last_price: Decimal.new("42.50")})
 
@@ -81,8 +81,8 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
 
     test "leaves data-initial-price empty when ticker missing or no last_price", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, ["NOPRICE"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, ["NOPRICE"])
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       build_ticker(%{symbol: "NOPRICE"})
 
@@ -93,8 +93,8 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
 
     test "pushes price_tick event on PubSub broadcast", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, ["WLTEST"])
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, ["WLTEST"])
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       build_ticker(%{symbol: "WLTEST"})
 
@@ -110,18 +110,18 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
 
     test "empty state when watchlist is empty", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, [])
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, [])
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       {:ok, _view, html} = live(conn, ~p"/")
 
       assert html =~ "Add symbols to"
-      assert html =~ "watchlist.txt"
+      assert html =~ "tracked_tickers.txt"
     end
 
     test "renders symbols from watchlist with price labels", %{conn: conn} do
-      Application.put_env(:long_or_short, :watchlist_override, ~w(AAPL TSLA))
-      on_exit(fn -> Application.delete_env(:long_or_short, :watchlist_override) end)
+      Application.put_env(:long_or_short, :tracked_tickers_override, ~w(AAPL TSLA))
+      on_exit(fn -> Application.delete_env(:long_or_short, :tracked_tickers_override) end)
 
       {:ok, _view, html} = live(conn, ~p"/")
 
