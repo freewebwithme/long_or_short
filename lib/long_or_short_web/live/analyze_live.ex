@@ -245,6 +245,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
                   search_event="ticker_search"
                   select_event="ticker_selected"
                   clear_event="ticker_clear"
+                  wrap_in_form={false}
                 />
                 <input type="hidden" name="symbol" value={@ticker_query} />
                 <p :if={@form_errors[:symbol]} class="text-error text-xs mt-1">
