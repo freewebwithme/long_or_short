@@ -106,9 +106,15 @@ defmodule LongOrShortWeb.Layouts do
           </div>
           <ul
             tabindex="0"
-            class="menu menu-sm dropdown-content bg-base-200 rounded-box z-40 mt-2 w-48 p-2 shadow"
+            class="menu menu-sm dropdown-content bg-base-200 rounded-box z-40 mt-2 w-64 p-2 shadow"
           >
-            <li class="menu-title text-xs opacity-60">{@current_user.email}</li>
+            <li class="menu-title">
+              <div class="text-xs opacity-60 truncate" title={@current_user.email}>
+                {@current_user.email}
+              </div>
+            </li>
+            <li><.link navigate={~p"/profile"}>Profile</.link></li>
+            <li><.link navigate={~p"/settings"}>Settings</.link></li>
             <li>
               <.link href={~p"/sign-out"} method="delete">Sign out</.link>
             </li>

@@ -35,6 +35,8 @@ defmodule LongOrShortWeb.Router do
       live "/analyze", AnalyzeLive, :new
       live "/analyze/:article_id", AnalyzeLive, :show
       live "/watchlist", WatchlistLive, :index
+      live "/profile", ProfileLive, :index
+      live "/settings", SettingsLive, :index
     end
   end
 
