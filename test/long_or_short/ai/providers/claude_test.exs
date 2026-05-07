@@ -31,16 +31,24 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
   defp stub(fun), do: Req.Test.stub(LongOrShort.AI.Providers.Claude, fun)
 
   defp tool_use_response(name, input, opts \\ []) do
+    usage =
+      %{
+        "input_tokens" => Keyword.get(opts, :input_tokens, 100),
+        "output_tokens" => Keyword.get(opts, :output_tokens, 50)
+      }
+      |> maybe_put("cache_creation_input_tokens", opts[:cache_creation_input_tokens])
+      |> maybe_put("cache_read_input_tokens", opts[:cache_read_input_tokens])
+
     %{
       "content" => [
         %{"type" => "tool_use", "id" => "tu_1", "name" => name, "input" => input}
       ],
-      "usage" => %{
-        "input_tokens" => Keyword.get(opts, :input_tokens, 100),
-        "output_tokens" => Keyword.get(opts, :output_tokens, 50)
-      }
+      "usage" => usage
     }
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   describe "call/3 — request shape" do
     test "POSTs to /v1/messages with the expected headers and body" do
@@ -95,6 +103,189 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
     end
   end
 
+  describe "call/3 — prompt caching (LON-38)" do
+    test "wraps the system message in a cache-tagged content block" do
+      messages = [
+        %{role: "system", content: "You are a trader's analyst."},
+        %{role: "user", content: "Analyze this article."}
+      ]
+
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["system"] == [
+                 %{
+                   "type" => "text",
+                   "text" => "You are a trader's analyst.",
+                   "cache_control" => %{"type" => "ephemeral"}
+                 }
+               ]
+
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+      end)
+
+      Claude.call(messages, @tools)
+    end
+
+    test "omits the system parameter when no system message is provided" do
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        refute Map.has_key?(body, "system")
+
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+      end)
+
+      Claude.call(@messages, @tools)
+    end
+
+    test "marks only the last tool with cache_control" do
+      multi_tools = [
+        %{name: "first", description: "x", input_schema: %{type: "object", properties: %{}}},
+        %{name: "second", description: "y", input_schema: %{type: "object", properties: %{}}}
+      ]
+
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        [first, last] = body["tools"]
+        refute Map.has_key?(first, "cache_control")
+        assert last["cache_control"] == %{"type" => "ephemeral"}
+
+        Req.Test.json(conn, tool_use_response("first", %{}))
+      end)
+
+      Claude.call(@messages, multi_tools)
+    end
+
+    test "marks the only tool with cache_control when the list has one entry" do
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        [only] = body["tools"]
+        assert only["cache_control"] == %{"type" => "ephemeral"}
+
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+      end)
+
+      Claude.call(@messages, @tools)
+    end
+  end
+
+  describe "call/3 — usage and telemetry (LON-38)" do
+    test "exposes cache token fields when the API returns them" do
+      stub(fn conn ->
+        Req.Test.json(
+          conn,
+          tool_use_response("record_news_analysis", %{},
+            input_tokens: 50,
+            output_tokens: 25,
+            cache_creation_input_tokens: 800,
+            cache_read_input_tokens: 0
+          )
+        )
+      end)
+
+      assert {:ok, response} = Claude.call(@messages, @tools)
+
+      assert response.usage == %{
+               input_tokens: 50,
+               output_tokens: 25,
+               cache_creation_input_tokens: 800,
+               cache_read_input_tokens: 0
+             }
+    end
+
+    test "defaults cache token fields to 0 when the API omits them" do
+      stub(fn conn ->
+        Req.Test.json(
+          conn,
+          tool_use_response("record_news_analysis", %{},
+            input_tokens: 100,
+            output_tokens: 50
+          )
+        )
+      end)
+
+      assert {:ok, response} = Claude.call(@messages, @tools)
+
+      assert response.usage == %{
+               input_tokens: 100,
+               output_tokens: 50,
+               cache_creation_input_tokens: 0,
+               cache_read_input_tokens: 0
+             }
+    end
+
+    test "emits [:long_or_short, :ai, :claude, :call] telemetry on success" do
+      test_pid = self()
+      handler_id = "test-claude-call-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:long_or_short, :ai, :claude, :call],
+        fn _event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      stub(fn conn ->
+        Req.Test.json(
+          conn,
+          tool_use_response("record_news_analysis", %{},
+            input_tokens: 200,
+            output_tokens: 75,
+            cache_creation_input_tokens: 800,
+            cache_read_input_tokens: 0
+          )
+        )
+      end)
+
+      assert {:ok, _} = Claude.call(@messages, @tools)
+
+      assert_receive {:telemetry, measurements, %{}}
+
+      assert measurements == %{
+               input_tokens: 200,
+               output_tokens: 75,
+               cache_creation_input_tokens: 800,
+               cache_read_input_tokens: 0
+             }
+    end
+
+    test "does not emit telemetry on error responses" do
+      test_pid = self()
+      handler_id = "test-claude-call-error-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:long_or_short, :ai, :claude, :call],
+        fn _event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      stub(fn conn ->
+        conn
+        |> Plug.Conn.put_status(500)
+        |> Req.Test.json(%{"error" => "boom"})
+      end)
+
+      assert {:error, _} = Claude.call(@messages, @tools)
+      refute_receive {:telemetry, _, _}, 100
+    end
+  end
+
   describe "call/3 — response normalization" do
     test "extracts tool_calls and usage on a clean tool_use response" do
       stub(fn conn ->
@@ -119,7 +310,13 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
              ]
 
       assert is_nil(response.text)
-      assert response.usage == %{input_tokens: 1234, output_tokens: 567}
+
+      assert response.usage == %{
+               input_tokens: 1234,
+               output_tokens: 567,
+               cache_creation_input_tokens: 0,
+               cache_read_input_tokens: 0
+             }
     end
 
     test "returns text-only response with empty tool_calls list" do
@@ -285,6 +482,45 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
                  ],
                  tool_choice: %{type: "tool", name: "test"}
                )
+    end
+
+    test "back-to-back calls write the prompt cache, then read from it" do
+      # Sonnet 4.6's minimum cacheable prefix is 2048 tokens. Anthropic
+      # silently skips caching below the threshold, so the system block
+      # has to be padded comfortably past it for this assertion to be
+      # meaningful. ×400 → ~11.2K chars → ~2800 tokens, well clear of
+      # the 2048 floor (verified empirically: ×200 → ~1660 tokens →
+      # cache_creation_input_tokens came back 0).
+      big_system = String.duplicate("Trader analysis instruction. ", 400)
+
+      messages = [
+        %{role: "system", content: big_system},
+        %{role: "user", content: "Record a verdict for AAPL using the tool."}
+      ]
+
+      tools = [
+        %{
+          name: "record",
+          description: "Record a verdict.",
+          input_schema: %{
+            type: "object",
+            properties: %{verdict: %{type: "string"}},
+            required: ["verdict"]
+          }
+        }
+      ]
+
+      opts = [tool_choice: %{type: "tool", name: "record"}]
+
+      assert {:ok, %{usage: usage1}} = Claude.call(messages, tools, opts)
+
+      assert usage1.cache_creation_input_tokens > 0,
+             "expected cache_creation_input_tokens > 0 on first call, got: #{inspect(usage1)}"
+
+      assert {:ok, %{usage: usage2}} = Claude.call(messages, tools, opts)
+
+      assert usage2.cache_read_input_tokens > 0,
+             "expected cache_read_input_tokens > 0 on second call, got: #{inspect(usage2)}"
     end
   end
 end
