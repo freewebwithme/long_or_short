@@ -43,6 +43,32 @@ defmodule LongOrShort.Tickers do
       define :add_to_watchlist, action: :add
       define :remove_from_watchlist, action: :destroy
       define :list_watchlist, action: :list_for_user, args: [:user_id]
+      define :list_all_watchlist_items, action: :list_all
+    end
+  end
+
+  @doc """
+  All distinct ticker symbols across every user's watchlist.
+
+  Returns an uppercased, deduplicated list ordered by `WatchlistItem`
+  insertion time (oldest first) so callers can apply FIFO-style
+  eviction when a cap is reached.
+
+  System-only: bypasses policies. The single intended caller is
+  `Tickers.Sources.FinnhubStream`, which uses this to compute the
+  global live-price WebSocket subscription union. UI code paths must
+  go through `list_watchlist/2` with an actor.
+  """
+  @spec all_watchlist_symbols() :: [String.t()]
+  def all_watchlist_symbols do
+    case list_all_watchlist_items(authorize?: false) do
+      {:ok, items} ->
+        items
+        |> Enum.map(&String.upcase(&1.ticker.symbol))
+        |> Enum.uniq()
+
+      _ ->
+        []
     end
   end
 end
