@@ -38,6 +38,62 @@ defmodule LongOrShort.News.Article do
     the DB call, scoped to `title + ticker`.
   * **`content_hash` + `[source, external_id, ticker_id]` identity**
     — permanent DB-level guarantees, queryable.
+
+  ## Pagination + sort design (LON-100)
+
+  The `:recent` read action uses keyset pagination
+  (`pagination keyset?: true, default_limit: 30`). The /feed page
+  consumes pages via "Load more"; dashboard widgets call with
+  `page: [limit: N]` and use only the first page.
+
+  ### Why sort by `id: :desc` instead of `published_at: :desc`
+
+  This was a deliberate trade-off, validated empirically against the
+  pipeline.
+
+  Pre-LON-100 the action sorted by `published_at: :desc`, which is
+  the chronologically intuitive ordering. After enabling keyset
+  pagination we discovered Ash's keyset cursor breaks down when the
+  primary sort column has microsecond-level ties:
+
+  * Finnhub polling commits multiple articles with the same
+    `DateTime.utc_now()` reading inside a single poll cycle.
+  * Postgres `utc_datetime_usec` resolution is microseconds, but
+    consecutive `DateTime.utc_now/0` calls in fast succession often
+    return the same value.
+  * With ties, the keyset cursor (which encodes only the sort column
+    value) cannot disambiguate which record is "next". Adding
+    `id: :desc` as a secondary sort *did not* help — Ash 3.24 doesn't
+    propagate multi-column sorts into the keyset cursor encoding.
+    Page 2 either returned 0 records or duplicated page 1.
+
+  `:id` is a `uuid_v7` PK — monotonic with creation time and always
+  unique. Using it as the sole sort column gives the cursor a stable,
+  single-column key. Page boundaries are reliable regardless of
+  ingestion bursts.
+
+  ### Why this is acceptable UX
+
+  In the Long or Short pipeline, `published_at` is set from the
+  source's reported publish time, but the ingestion order
+  (≈ `inserted_at` ≈ `id` ordering) is what the trader actually
+  perceives as "new on the feed". The two diverge only in two cases:
+
+  1. A late-arriving article (source backfills an older publish time).
+  2. Multiple articles ingested in the same poll with very different
+     source publish times.
+
+  For Phase 1 and the foreseeable trader workflow, "newest in our
+  system first" is the right behavior. If we ever need strict
+  publication-time ordering, we'll need either a unique secondary
+  attribute (e.g. a monotonic `seq` column) or an Ash version that
+  encodes multi-column keysets correctly.
+
+  ### Tiebreaker test discipline
+
+  Tests that explicitly assert publication-order should set distinct
+  `published_at` values per article AND prefer the underlying `:id`
+  ordering (which uuid_v7 guarantees matches creation order).
   """
 
   use Ash.Resource,
@@ -278,19 +334,24 @@ defmodule LongOrShort.News.Article do
     end
 
     read :recent do
-      argument :limit, :integer, default: 50
+      argument :ticker_id, :uuid
       argument :price_min, :decimal
       argument :price_max, :decimal
       argument :float_max, :integer
 
+      pagination keyset?: true, required?: false, default_limit: 30
+
       filter expr(
-               (is_nil(^arg(:price_min)) or ticker.last_price >= ^arg(:price_min)) and
+               (is_nil(^arg(:ticker_id)) or ticker_id == ^arg(:ticker_id)) and
+                 (is_nil(^arg(:price_min)) or ticker.last_price >= ^arg(:price_min)) and
                  (is_nil(^arg(:price_max)) or ticker.last_price <= ^arg(:price_max)) and
                  (is_nil(^arg(:float_max)) or ticker.float_shares <= ^arg(:float_max))
              )
 
-      prepare build(sort: [published_at: :desc])
-      prepare build(limit: arg(:limit))
+      # Sort by `id: :desc` rather than `published_at: :desc`. See the
+      # "Pagination + sort design" section in the module docs for the
+      # full rationale (Ash keyset cursors break on microsecond ties).
+      prepare build(sort: [id: :desc])
     end
 
     read :recent_for_ticker do

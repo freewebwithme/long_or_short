@@ -496,33 +496,28 @@ defmodule LongOrShort.News.ArticleTest do
   end
 
   describe "list_recent_articles/1" do
-    test "returns articles sorted by published_at descending" do
+    test "returns articles sorted by id descending (most recently ingested first)" do
       ticker = build_ticker()
-      now = DateTime.utc_now()
 
-      build_article_for_ticker(ticker, %{
-        published_at: DateTime.add(now, -7200, :second)
-      })
+      a1 = build_article_for_ticker(ticker, %{title: "First ingested"})
+      a2 = build_article_for_ticker(ticker, %{title: "Second ingested"})
+      a3 = build_article_for_ticker(ticker, %{title: "Third ingested"})
 
-      build_article_for_ticker(ticker, %{published_at: now})
+      {:ok, %Ash.Page.Keyset{results: [first, second, third]}} =
+        News.list_recent_articles(authorize?: false, page: [limit: 30])
 
-      build_article_for_ticker(ticker, %{
-        published_at: DateTime.add(now, -3600, :second)
-      })
-
-      {:ok, [first, second, third]} =
-        News.list_recent_articles(authorize?: false)
-
-      assert DateTime.compare(first.published_at, second.published_at) == :gt
-      assert DateTime.compare(second.published_at, third.published_at) == :gt
+      # uuid_v7 ids are monotonic — newer ingest sorts first
+      assert first.id == a3.id
+      assert second.id == a2.id
+      assert third.id == a1.id
     end
 
-    test "respects limit argument" do
+    test "respects page limit" do
       ticker = build_ticker()
       for _ <- 1..5, do: build_article_for_ticker(ticker)
 
-      {:ok, articles} =
-        News.list_recent_articles(%{limit: 2}, authorize?: false)
+      {:ok, %Ash.Page.Keyset{results: articles}} =
+        News.list_recent_articles(authorize?: false, page: [limit: 2])
 
       assert length(articles) == 2
     end
