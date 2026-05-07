@@ -15,11 +15,20 @@ defmodule LongOrShortWeb.DashboardLive do
     * `Indices.Events` — index ticks (DJIA / NASDAQ-100 / S&P 500)
     * `WatchlistEvents.subscribe(user_id)` — `:watchlist_changed`
       refreshes the watchlist + watchlist news without a manual reload
+    * `Analysis.Events.subscribe_for_article/1` — once per article in
+      either news widget; delivers `{:news_analysis_ready, _}` after
+      the analyzer finishes. Mirrors the FeedLive pattern.
+
+  ## Analyze flow (inline)
+
+  Click on the dashboard's Analyze button spawns the analyzer in place
+  and updates the same condensed card when the analysis lands. No
+  navigation — keeps the trader's scanning context intact.
   """
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.{Indices, News, Tickers}
-  alias LongOrShort.Analysis.Events
+  alias LongOrShort.{Analysis, Indices, News, Tickers}
+  alias LongOrShort.Analysis.NewsAnalyzer
   alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
@@ -34,20 +43,27 @@ defmodule LongOrShortWeb.DashboardLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
       News.Events.subscribe()
-      Events.subscribe()
       Indices.Events.subscribe()
       WatchlistEvents.subscribe(actor.id)
     end
 
     watchlist = load_watchlist(actor)
     ticker_ids = watchlist_ticker_id_set(watchlist)
+    news = load_news(actor)
+    watchlist_news = load_watchlist_news(ticker_ids, actor)
+
+    if connected?(socket) do
+      subscribe_for_articles(news ++ watchlist_news)
+    end
 
     socket =
       socket
       |> assign(:watchlist, watchlist)
       |> assign(:watchlist_ticker_ids, ticker_ids)
-      |> assign(:news, load_news(actor))
-      |> assign(:watchlist_news, load_watchlist_news(ticker_ids, actor))
+      |> assign(:news, news)
+      |> assign(:watchlist_news, watchlist_news)
+      |> assign(:analyzing_ids, MapSet.new())
+      |> assign(:expanded_ids, MapSet.new())
       |> assign(:active_news, [])
       |> assign(:search_query, "")
       |> assign(:search_results, [])
@@ -58,10 +74,34 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("analyze", %{"id" => _article_id}, socket) do
-    # LON-83 will rebuild this on top of LON-82's `NewsAnalyzer`.
-    socket = put_flash(socket, :info, "Analyzer rebuild in progress — try again soon.")
-    {:noreply, socket}
+  def handle_event("analyze", %{"id" => article_id}, socket) do
+    actor = socket.assigns.current_user
+
+    case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
+      {:ok, article} ->
+        spawn_analyzer(article, actor, self())
+
+        socket =
+          socket
+          |> update(:analyzing_ids, &MapSet.put(&1, article_id))
+          |> replace_article_in_lists(article)
+
+        {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Article not found.")}
+    end
+  end
+
+  def handle_event("toggle_detail", %{"id" => article_id}, socket) do
+    expanded_ids =
+      if MapSet.member?(socket.assigns.expanded_ids, article_id) do
+        MapSet.delete(socket.assigns.expanded_ids, article_id)
+      else
+        MapSet.put(socket.assigns.expanded_ids, article_id)
+      end
+
+    {:noreply, assign(socket, :expanded_ids, expanded_ids)}
   end
 
   def handle_event("search", %{"query" => query}, socket) do
@@ -122,10 +162,12 @@ defmodule LongOrShortWeb.DashboardLive do
 
   def handle_info({:new_article, article}, socket) do
     case News.get_article(article.id,
-           load: [:ticker],
+           load: [:ticker, :news_analysis],
            actor: socket.assigns.current_user
          ) do
       {:ok, article} ->
+        Analysis.Events.subscribe_for_article(article.id)
+
         news =
           [article | socket.assigns.news]
           |> Enum.take(@news_limit)
@@ -148,16 +190,34 @@ defmodule LongOrShortWeb.DashboardLive do
     end
   end
 
+  def handle_info({:news_analysis_ready, %{article_id: article_id}}, socket) do
+    {:noreply,
+     socket
+     |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
+     |> reload_article_in_lists(article_id)}
+  end
+
+  def handle_info({:analyze_failed, article_id, reason}, socket) do
+    {:noreply,
+     socket
+     |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
+     |> reload_article_in_lists(article_id)
+     |> put_flash(:error, "Analysis failed: #{format_error(reason)}")}
+  end
+
   def handle_info({:watchlist_changed, _user_id}, socket) do
     actor = socket.assigns.current_user
     watchlist = load_watchlist(actor)
     ticker_ids = watchlist_ticker_id_set(watchlist)
+    watchlist_news = load_watchlist_news(ticker_ids, actor)
+
+    subscribe_for_articles(watchlist_news)
 
     {:noreply,
      socket
      |> assign(:watchlist, watchlist)
      |> assign(:watchlist_ticker_ids, ticker_ids)
-     |> assign(:watchlist_news, load_watchlist_news(ticker_ids, actor))}
+     |> assign(:watchlist_news, watchlist_news)}
   end
 
   def handle_info({:index_tick, label, payload}, socket) do
@@ -190,8 +250,17 @@ defmodule LongOrShortWeb.DashboardLive do
           "grid grid-cols-1 gap-4",
           @watchlist != [] && "lg:grid-cols-2"
         ]}>
-          <.all_news_card news={@news} />
-          <.watchlist_news_card :if={@watchlist != []} news={@watchlist_news} />
+          <.all_news_card
+            news={@news}
+            analyzing_ids={@analyzing_ids}
+            expanded_ids={@expanded_ids}
+          />
+          <.watchlist_news_card
+            :if={@watchlist != []}
+            news={@watchlist_news}
+            analyzing_ids={@analyzing_ids}
+            expanded_ids={@expanded_ids}
+          />
         </div>
       </div>
     </Layouts.app>
@@ -344,6 +413,8 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   attr :news, :list, required: true
+  attr :analyzing_ids, :any, required: true
+  attr :expanded_ids, :any, required: true
 
   defp all_news_card(assigns) do
     ~H"""
@@ -358,6 +429,9 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
+          analysis={extract_analysis(article)}
+          analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+          expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="all"
         />
       </div>
@@ -366,6 +440,8 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   attr :news, :list, required: true
+  attr :analyzing_ids, :any, required: true
+  attr :expanded_ids, :any, required: true
 
   defp watchlist_news_card(assigns) do
     ~H"""
@@ -380,6 +456,9 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
+          analysis={extract_analysis(article)}
+          analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+          expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="watchlist"
         />
       </div>
@@ -404,7 +483,10 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   defp load_news(actor) do
-    case News.list_recent_articles(%{limit: @news_limit}, load: [:ticker], actor: actor) do
+    case News.list_recent_articles(%{limit: @news_limit},
+           load: [:ticker, :news_analysis],
+           actor: actor
+         ) do
       {:ok, articles} -> articles
       _ -> []
     end
@@ -415,7 +497,7 @@ defmodule LongOrShortWeb.DashboardLive do
       []
     else
       case News.list_recent_articles_for_tickers(MapSet.to_list(ticker_ids),
-             load: [:ticker],
+             load: [:ticker, :news_analysis],
              actor: actor
            ) do
         {:ok, articles} -> articles
@@ -423,6 +505,61 @@ defmodule LongOrShortWeb.DashboardLive do
       end
     end
   end
+
+  defp subscribe_for_articles(articles) do
+    articles
+    |> Enum.map(& &1.id)
+    |> Enum.uniq()
+    |> Enum.each(&Analysis.Events.subscribe_for_article/1)
+  end
+
+  defp spawn_analyzer(article, actor, parent) do
+    Task.Supervisor.start_child(LongOrShort.Analysis.TaskSupervisor, fn ->
+      case NewsAnalyzer.analyze(article, actor: actor) do
+        {:ok, _analysis} ->
+          # Success delivered via PubSub → handle_info({:news_analysis_ready, _}, _)
+          :ok
+
+        {:error, reason} ->
+          send(parent, {:analyze_failed, article.id, reason})
+      end
+    end)
+  end
+
+  defp replace_article_in_lists(socket, %{id: id} = article) do
+    socket
+    |> assign(:news, replace_in_list(socket.assigns.news, id, article))
+    |> assign(
+      :watchlist_news,
+      replace_in_list(socket.assigns.watchlist_news, id, article)
+    )
+  end
+
+  defp replace_in_list(list, id, article) do
+    Enum.map(list, fn
+      %{id: ^id} -> article
+      other -> other
+    end)
+  end
+
+  defp reload_article_in_lists(socket, article_id) do
+    case News.get_article(article_id,
+           load: [:ticker, :news_analysis],
+           actor: socket.assigns.current_user
+         ) do
+      {:ok, article} -> replace_article_in_lists(socket, article)
+      {:error, _} -> socket
+    end
+  end
+
+  defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a
+  defp extract_analysis(_), do: nil
+
+  defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
+  defp format_error(:no_tool_call), do: "Model returned an unexpected response."
+  defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
+  defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
+  defp format_error(reason), do: inspect(reason)
 
   defp index_color(pct) do
     cond do

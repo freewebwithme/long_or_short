@@ -1,12 +1,19 @@
 defmodule LongOrShortWeb.DashboardLiveTest do
-  use LongOrShortWeb.ConnCase, async: true
+  use LongOrShortWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import LongOrShort.{AccountsFixtures, NewsFixtures, TickersFixtures}
+  import LongOrShort.{AccountsFixtures, AnalysisFixtures, NewsFixtures, TickersFixtures}
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
+  alias LongOrShort.AI.MockProvider
+  alias LongOrShort.Analysis.Events, as: AnalysisEvents
   alias LongOrShort.News
   alias LongOrShort.Tickers.WatchlistEvents
+
+  setup do
+    MockProvider.reset()
+    :ok
+  end
 
   defp log_in_user(conn, user) do
     conn
@@ -228,21 +235,86 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert render(view) =~ "Live tesla news"
     end
 
-    # NOTE: Full analyze workflow test deferred — LON-80 retired the
-    # RepetitionAnalyzer and the new NewsAnalyzer (LON-82) plus its UI
-    # rewire (LON-83) haven't landed.
-    test "clicking Analyze on dashboard shows the rebuild-in-progress flash", %{conn: conn} do
+    test "clicking Analyze on a dashboard card enters analyzing state with skeleton",
+         %{conn: conn, user: user} do
+      build_trading_profile(%{user_id: user.id})
+
+      test_pid = self()
+
+      MockProvider.stub(fn _msgs, _tools, _opts ->
+        send(test_pid, :ai_called)
+
+        receive do
+          :proceed -> {:ok, %{tool_calls: [], text: nil, usage: %{}}}
+        after
+          5_000 -> {:error, :test_timeout}
+        end
+      end)
+
       ticker = build_ticker(%{symbol: "DASH"})
       article = build_article_for_ticker(ticker, %{title: "Dash news"})
 
       {:ok, view, _html} = live(conn, ~p"/")
 
+      view
+      |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+      |> render_click()
+
+      # Wait for the spawned Task to actually call the AI — proves the
+      # handler ran and the analysis is in flight
+      assert_receive :ai_called, 1_000
+
+      html = render(view)
+      assert html =~ "Analyzing"
+      assert html =~ "loading-spinner"
+    end
+
+    test "broadcasting :news_analysis_ready updates the dashboard card", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "BCST"})
+      article = build_article_for_ticker(ticker, %{title: "Broadcast news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Pre-condition: Analyze button visible (no analysis yet)
+      assert render(view) =~ ~s|phx-click="analyze"|
+
+      # Build the analysis and broadcast exactly what the analyzer would send
+      analysis = build_news_analysis(%{article_id: article.id, verdict: :skip})
+      AnalysisEvents.broadcast_analysis_ready(analysis)
+
+      # Drain handle_info
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "SKIP"
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
+    test "toggle_detail does not crash and expands article detail", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "TGL"})
+      article = build_article_for_ticker(ticker, %{title: "Toggle news"})
+
+      analysis =
+        build_news_analysis(%{
+          article_id: article.id,
+          verdict: :skip,
+          detail_summary: "DETAIL_SUMMARY_FIXTURE_MARKER"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      AnalysisEvents.broadcast_analysis_ready(analysis)
+      _ = :sys.get_state(view.pid)
+
+      # Detail summary not visible while collapsed
+      refute render(view) =~ "DETAIL_SUMMARY_FIXTURE_MARKER"
+
+      # Click the toggle — pre-LON-101 this raised FunctionClauseError
       html =
         view
-        |> element("button[phx-click='analyze'][phx-value-id='#{article.id}']")
+        |> element("button[phx-click='toggle_detail'][phx-value-id='#{article.id}']")
         |> render_click()
 
-      assert html =~ "Analyzer rebuild in progress"
+      assert html =~ "DETAIL_SUMMARY_FIXTURE_MARKER"
     end
 
     test "empty state when no articles", %{conn: conn} do
