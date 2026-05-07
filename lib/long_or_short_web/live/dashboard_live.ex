@@ -500,11 +500,14 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   defp load_news(actor) do
-    case News.list_recent_articles(%{limit: @news_limit},
+    # `:recent` is keyset-paginated (LON-100). Dashboard only ever shows
+    # the first page, so we unwrap straight to the results list.
+    case News.list_recent_articles(
            load: [:ticker, :news_analysis],
-           actor: actor
+           actor: actor,
+           page: [limit: @news_limit]
          ) do
-      {:ok, articles} -> articles
+      {:ok, %Ash.Page.Keyset{results: articles}} -> articles
       _ -> []
     end
   end

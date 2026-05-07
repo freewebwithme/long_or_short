@@ -396,4 +396,123 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ "Set up your trader profile"
     end
   end
+
+  describe "ticker filter" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "selecting a ticker narrows the feed to that ticker's articles", %{conn: conn} do
+      apple = build_ticker(%{symbol: "AAPL", company_name: "Apple Inc"})
+      tesla = build_ticker(%{symbol: "TSLA"})
+
+      build_article_for_ticker(apple, %{title: "Apple in the news"})
+      build_article_for_ticker(tesla, %{title: "Tesla unrelated"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      view
+      |> form("#feed-ticker-filter form", %{query: "AAPL"})
+      |> render_change()
+
+      html =
+        view
+        |> element("button[phx-click='ticker_filter_select'][phx-value-symbol='AAPL']")
+        |> render_click()
+
+      assert html =~ "Apple in the news"
+      refute html =~ "Tesla unrelated"
+    end
+
+    test "clearing the ticker filter restores the unfiltered feed", %{conn: conn} do
+      apple = build_ticker(%{symbol: "AAPL"})
+      tesla = build_ticker(%{symbol: "TSLA"})
+
+      build_article_for_ticker(apple, %{title: "Apple article"})
+      build_article_for_ticker(tesla, %{title: "Tesla article"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      view
+      |> form("#feed-ticker-filter form", %{query: "AAPL"})
+      |> render_change()
+
+      view
+      |> element("button[phx-click='ticker_filter_select'][phx-value-symbol='AAPL']")
+      |> render_click()
+
+      html = render_click(view, "ticker_filter_clear")
+
+      assert html =~ "Apple article"
+      assert html =~ "Tesla article"
+    end
+  end
+
+  describe "keyset pagination" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "Load more button appears only when there are more pages", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "PG"})
+
+      # Single article — well under @page_limit, no Load more button
+      build_article_for_ticker(ticker, %{title: "Only one"})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+      refute html =~ ~s|phx-click="load_more"|
+    end
+
+    test "Load more appends the next page without losing the first", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "PG"})
+
+      # 35 articles — first page = 30, second page = 5, more? true on first
+      first_titles = for i <- 1..35, do: "Article #{String.pad_leading(to_string(i), 2, "0")}"
+
+      Enum.each(first_titles, fn title ->
+        build_article_for_ticker(ticker, %{title: title})
+      end)
+
+      {:ok, view, html} = live(conn, ~p"/feed")
+      assert html =~ ~s|phx-click="load_more"|
+
+      # The 5 oldest titles aren't on page 1
+      refute html =~ "Article 01"
+      refute html =~ "Article 05"
+
+      html = render_click(view, "load_more")
+
+      # After loading: oldest visible, newest still visible
+      assert html =~ "Article 01"
+      assert html =~ "Article 35"
+
+      # No more pages — button gone
+      refute html =~ ~s|phx-click="load_more"|
+    end
+
+    test "live :new_article broadcast still prepends after Load more", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "PG"})
+      for i <- 1..35, do: build_article_for_ticker(ticker, %{title: "Article #{i}"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+      render_click(view, "load_more")
+
+      # Now broadcast a brand-new article
+      new_ticker = build_ticker(%{symbol: "FRESH"})
+      new_article = build_article_for_ticker(new_ticker, %{title: "Hot off the press"})
+      {:ok, new_article} = News.get_article(new_article.id, load: [:ticker], authorize?: false)
+      News.Events.broadcast_new_article(new_article)
+
+      html = render(view)
+      assert html =~ "Hot off the press"
+      # Pagination state preserved — earlier items still there
+      assert html =~ "Article 1"
+    end
+  end
 end

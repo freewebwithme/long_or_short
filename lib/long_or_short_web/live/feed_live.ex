@@ -24,15 +24,23 @@ defmodule LongOrShortWeb.FeedLive do
 
   Detail toggle is parent-owned via `expanded_ids` MapSet so re-render
   via `stream_insert` keeps state in sync.
+
+  ## Pagination + ticker filter (LON-100)
+
+  Articles load in keyset-paginated pages of `@page_limit`. The bottom
+  "Load more" button triggers the next page; real-time `:new_article`
+  broadcasts continue to prepend independently of pagination state.
+  Ticker filter goes through the shared `TickerAutocomplete` component
+  and composes with the existing price/float filters.
   """
   use LongOrShortWeb, :live_view
 
   alias LongOrShortWeb.Format
-  alias LongOrShortWeb.Live.Components.ArticleComponents
-  alias LongOrShort.{News, Analysis}
+  alias LongOrShortWeb.Live.Components.{ArticleComponents, TickerAutocomplete}
+  alias LongOrShort.{Analysis, News, Tickers}
   alias LongOrShort.Analysis.NewsAnalyzer
 
-  @initial_limit 30
+  @page_limit 30
 
   @impl true
   def mount(_params, _session, socket) do
@@ -46,8 +54,12 @@ defmodule LongOrShortWeb.FeedLive do
     socket =
       socket
       |> assign(:filter, filter)
+      |> assign(:ticker_filter_query, "")
+      |> assign(:ticker_filter_results, [])
       |> assign(:analyzing_ids, MapSet.new())
       |> assign(:expanded_ids, MapSet.new())
+      |> assign(:last_cursor, nil)
+      |> assign(:more?, false)
       |> load_articles_with_filter(filter)
 
     {:ok, socket}
@@ -120,9 +132,93 @@ defmodule LongOrShortWeb.FeedLive do
     socket =
       socket
       |> assign(:filter, filter)
+      |> assign(:ticker_filter_query, "")
+      |> assign(:ticker_filter_results, [])
       |> load_articles_with_filter(filter)
 
     {:noreply, socket}
+  end
+
+  def handle_event("ticker_filter_search", %{"query" => query}, socket) do
+    query = String.trim(query)
+    actor = socket.assigns.current_user
+
+    results =
+      case query do
+        "" ->
+          []
+
+        q ->
+          case Tickers.search_tickers(q, actor: actor) do
+            {:ok, list} -> list
+            _ -> []
+          end
+      end
+
+    {:noreply,
+     socket
+     |> assign(:ticker_filter_query, query)
+     |> assign(:ticker_filter_results, results)}
+  end
+
+  def handle_event("ticker_filter_select", %{"symbol" => symbol}, socket) do
+    actor = socket.assigns.current_user
+
+    case Tickers.get_ticker_by_symbol(symbol, actor: actor) do
+      {:ok, ticker} ->
+        filter = %{socket.assigns.filter | ticker_id: ticker.id}
+
+        {:noreply,
+         socket
+         |> assign(:filter, filter)
+         |> assign(:ticker_filter_query, ticker.symbol)
+         |> assign(:ticker_filter_results, [])
+         |> load_articles_with_filter(filter)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("ticker_filter_clear", _params, socket) do
+    filter = %{socket.assigns.filter | ticker_id: nil}
+
+    {:noreply,
+     socket
+     |> assign(:filter, filter)
+     |> assign(:ticker_filter_query, "")
+     |> assign(:ticker_filter_results, [])
+     |> load_articles_with_filter(filter)}
+  end
+
+  def handle_event("load_more", _params, socket) do
+    actor = socket.assigns.current_user
+    args = filter_to_args(socket.assigns.filter)
+
+    case News.list_recent_articles(args,
+           load: [:ticker, :news_analysis],
+           actor: actor,
+           page: [after: socket.assigns.last_cursor, limit: @page_limit]
+         ) do
+      {:ok, %Ash.Page.Keyset{results: articles, more?: more}} ->
+        if connected?(socket) do
+          for article <- articles, do: Analysis.Events.subscribe_for_article(article.id)
+        end
+
+        socket =
+          articles
+          |> Enum.reduce(socket, fn article, sock ->
+            stream_insert(sock, :articles, article, at: -1)
+          end)
+          |> assign(:last_cursor, last_keyset(articles, socket.assigns.last_cursor))
+          |> assign(:more?, more)
+          |> update(:article_count, &(&1 + length(articles)))
+
+        {:noreply, socket}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   # ── PubSub & async ────────────────────────────────────────────────
@@ -195,6 +291,16 @@ defmodule LongOrShortWeb.FeedLive do
             {@article_count} {if @article_count == 1, do: "update", else: "updates"} received
           </p>
         </div>
+        <div id="feed-ticker-filter" class="mb-4 max-w-sm">
+          <label class="text-xs opacity-60 block mb-1">Filter by ticker</label>
+          <TickerAutocomplete.ticker_autocomplete
+            query={@ticker_filter_query}
+            results={@ticker_filter_results}
+            search_event="ticker_filter_search"
+            select_event="ticker_filter_select"
+            clear_event="ticker_filter_clear"
+          />
+        </div>
         <form
           phx-change="filter_changed"
           phx-debounce="300"
@@ -254,6 +360,16 @@ defmodule LongOrShortWeb.FeedLive do
             />
           </div>
         </div>
+
+        <div :if={@more?} class="flex justify-center mt-4">
+          <button
+            type="button"
+            phx-click="load_more"
+            class="btn btn-outline btn-sm"
+          >
+            Load more
+          </button>
+        </div>
       </div>
     </Layouts.app>
     """
@@ -261,19 +377,19 @@ defmodule LongOrShortWeb.FeedLive do
 
   # ── helpers ────────────────────────────────────────────────────────
 
-  defp empty_filter, do: %{price_min: nil, price_max: nil, float_max: nil}
+  defp empty_filter,
+    do: %{ticker_id: nil, price_min: nil, price_max: nil, float_max: nil}
 
   defp load_articles_with_filter(socket, filter) do
     actor = socket.assigns.current_user
+    args = filter_to_args(filter)
 
-    args =
-      %{limit: @initial_limit}
-      |> maybe_put(:price_min, filter.price_min)
-      |> maybe_put(:price_max, filter.price_max)
-      |> maybe_put(:float_max, filter.float_max)
-
-    {:ok, articles} =
-      News.list_recent_articles(args, load: [:ticker, :news_analysis], actor: actor)
+    {:ok, %Ash.Page.Keyset{results: articles, more?: more}} =
+      News.list_recent_articles(args,
+        load: [:ticker, :news_analysis],
+        actor: actor,
+        page: [limit: @page_limit]
+      )
 
     if connected?(socket) do
       for article <- articles, do: Analysis.Events.subscribe_for_article(article.id)
@@ -281,7 +397,28 @@ defmodule LongOrShortWeb.FeedLive do
 
     socket
     |> assign(:article_count, length(articles))
+    |> assign(:last_cursor, last_keyset(articles, nil))
+    |> assign(:more?, more)
     |> stream(:articles, articles, reset: true)
+  end
+
+  defp filter_to_args(filter) do
+    %{}
+    |> maybe_put(:ticker_id, filter.ticker_id)
+    |> maybe_put(:price_min, filter.price_min)
+    |> maybe_put(:price_max, filter.price_max)
+    |> maybe_put(:float_max, filter.float_max)
+  end
+
+  defp last_keyset([], fallback), do: fallback
+
+  defp last_keyset(articles, _fallback) do
+    articles
+    |> List.last()
+    |> case do
+      %{__metadata__: %{keyset: cursor}} -> cursor
+      _ -> nil
+    end
   end
 
   defp refresh_card(socket, article_id) do
