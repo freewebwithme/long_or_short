@@ -21,12 +21,14 @@ defmodule LongOrShortWeb.ProfileLive do
   ## Trader profile
 
   `TradingProfile` (LON-88) drives prompt personalization. Required fields
-  (`trading_style`, `time_horizon`) make a CTA flow more honest than auto-
-  creating with arbitrary defaults — the user explicitly bootstraps with
-  sensible defaults on first visit. After bootstrap, a full edit form
-  appears. Style-specific fields (price band, float cap) render conditionally
-  based on the current `:trading_style` selection, matching how the prompt
-  builder consumes them.
+  (`trading_style`, `time_horizon`) are surfaced as `Select one...`
+  prompts so the trader makes a deliberate choice — no default is
+  auto-injected (LON-102). The form is rendered whether a profile
+  exists yet or not; the first valid submit creates the row via
+  `:upsert`, subsequent submits use `:update`. Style-specific fields
+  (price band, float cap) render conditionally based on the current
+  `:trading_style` selection, matching how the prompt builder
+  consumes them.
   """
 
   use LongOrShortWeb, :live_view
@@ -120,15 +122,25 @@ defmodule LongOrShortWeb.ProfileLive do
   end
 
   defp assign_trading_profile_form(socket) do
-    case socket.assigns.trading_profile do
-      nil ->
-        assign(socket, :trading_profile_form, nil)
+    user = socket.assigns.current_user
 
-      profile ->
-        user = socket.assigns.current_user
-        form = AshPhoenix.Form.for_update(profile, :update, actor: user)
-        assign(socket, :trading_profile_form, to_form(form))
-    end
+    form =
+      case socket.assigns.trading_profile do
+        nil ->
+          # First-time visitor: empty :upsert form. user_id is pre-filled
+          # from the session so the form can't be retargeted to another user.
+          AshPhoenix.Form.for_create(
+            LongOrShort.Accounts.TradingProfile,
+            :upsert,
+            params: %{"user_id" => user.id},
+            actor: user
+          )
+
+        profile ->
+          AshPhoenix.Form.for_update(profile, :update, actor: user)
+      end
+
+    assign(socket, :trading_profile_form, to_form(form))
   end
 
   # ── Personal info handlers ──────────────────────────────────────────
@@ -178,30 +190,21 @@ defmodule LongOrShortWeb.ProfileLive do
 
   # ── Trader profile handlers ────────────────────────────────────────
 
-  def handle_event("create_trading_profile", _params, socket) do
-    user = socket.assigns.current_user
-
-    {:ok, profile} =
-      Accounts.upsert_trading_profile(
-        %{user_id: user.id, trading_style: :momentum_day, time_horizon: :intraday},
-        actor: user
-      )
-
-    {:noreply,
-     socket
-     |> put_flash(:info, "Trader profile created — fill in the details below.")
-     |> assign(:trading_profile, profile)
-     |> assign_trading_profile_form()}
-  end
-
   def handle_event("validate_trading_profile", %{"form" => params}, socket) do
-    params = filter_empty_array_values(params)
+    params =
+      params
+      |> filter_empty_array_values()
+      |> ensure_user_id(socket.assigns.trading_profile, socket.assigns.current_user)
+
     form = AshPhoenix.Form.validate(socket.assigns.trading_profile_form.source, params)
     {:noreply, assign(socket, :trading_profile_form, to_form(form))}
   end
 
   def handle_event("save_trading_profile", %{"form" => params}, socket) do
-    params = filter_empty_array_values(params)
+    params =
+      params
+      |> filter_empty_array_values()
+      |> ensure_user_id(socket.assigns.trading_profile, socket.assigns.current_user)
 
     case AshPhoenix.Form.submit(socket.assigns.trading_profile_form.source, params: params) do
       {:ok, profile} ->
@@ -362,27 +365,6 @@ defmodule LongOrShortWeb.ProfileLive do
   attr :form, :any, required: true
   attr :profile, :any, required: true
 
-  defp trading_profile_card(%{profile: nil} = assigns) do
-    ~H"""
-    <section id="profile-trader" class="card bg-base-200 border border-base-300 p-4">
-      <h2 class="font-semibold mb-3">Trader profile</h2>
-
-      <p class="text-sm opacity-70 mb-3">
-        Your trader profile shapes how the AI analyzer frames news for your style.
-        We'll start with sensible defaults — you can refine them next.
-      </p>
-
-      <button
-        type="button"
-        phx-click="create_trading_profile"
-        class="btn btn-primary btn-sm"
-      >
-        Create your trader profile
-      </button>
-    </section>
-    """
-  end
-
   defp trading_profile_card(assigns) do
     style = current_trading_style(assigns.form)
     momentum? = style == :momentum_day
@@ -391,6 +373,11 @@ defmodule LongOrShortWeb.ProfileLive do
     ~H"""
     <section id="profile-trader" class="card bg-base-200 border border-base-300 p-4">
       <h2 class="font-semibold mb-3">Trader profile</h2>
+
+      <p :if={is_nil(@profile)} class="text-sm opacity-70 mb-3">
+        First time? Pick your trading style and time horizon below — the AI
+        analyzer uses them to frame news for how you actually trade.
+      </p>
 
       <.form
         for={@form}
@@ -403,6 +390,7 @@ defmodule LongOrShortWeb.ProfileLive do
           field={@form[:trading_style]}
           type="select"
           label="Trading style"
+          prompt="Select one..."
           options={trading_styles()}
         />
 
@@ -410,6 +398,7 @@ defmodule LongOrShortWeb.ProfileLive do
           field={@form[:time_horizon]}
           type="select"
           label="Time horizon"
+          prompt="Select one..."
           options={time_horizons()}
         />
 
@@ -492,6 +481,12 @@ defmodule LongOrShortWeb.ProfileLive do
       end
     end)
   end
+
+  # The :upsert action accepts user_id; the :update action does not. Inject
+  # it only when we're creating a fresh profile so :update isn't fed an
+  # extra field it would reject as `NoSuchInput`.
+  defp ensure_user_id(params, nil, user), do: Map.put(params, "user_id", user.id)
+  defp ensure_user_id(params, _profile, _user), do: params
 
   defp current_trading_style(form) do
     case form[:trading_style].value do

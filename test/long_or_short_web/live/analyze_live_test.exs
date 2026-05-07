@@ -82,6 +82,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
   describe "/analyze form" do
     setup %{conn: conn} do
       user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
       conn = log_in_user(conn, user)
       {:ok, conn: conn, user: user}
     end
@@ -175,6 +176,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
   describe "analysis card render" do
     setup %{conn: conn} do
       user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
       conn = log_in_user(conn, user)
       ticker = build_ticker(%{symbol: "SKYQ"})
       article = build_article_for_ticker(ticker, %{title: "Sky Quarry RFP"})
@@ -200,8 +202,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
     end
 
     test "Re-analyze button enters analyzing state again",
-         %{conn: conn, article: article, user: user} do
-      build_trading_profile(%{user_id: user.id})
+         %{conn: conn, article: article} do
       build_news_analysis(%{article_id: article.id, verdict: :skip})
 
       test_pid = self()
@@ -275,6 +276,58 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       {:ok, _view, html} = live(conn, ~p"/analyze/#{article.id}")
 
       assert html =~ "Analyzing"
+    end
+  end
+
+  describe "Analyze gate (no TradingProfile)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test ":new mode shows the profile-gate banner and disables submit",
+         %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/analyze")
+
+      assert html =~ ~s|id="analyze-profile-gate"|
+      assert html =~ "You need a trader profile"
+      assert html =~ ~s|href="/profile"|
+      assert html =~ ~r/<button[^>]*type="submit"[^>]*disabled/
+    end
+
+    test ":new mode server guard rejects programmatic submit",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/analyze")
+
+      html =
+        view
+        |> element("#analyze-form")
+        |> render_submit(%{"symbol" => "BTBD", "paste" => "Title\nBody", "source" => "benzinga"})
+
+      assert html =~ "Set up your trader profile"
+    end
+
+    test ":show mode disables Re-analyze button", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "RBT"})
+      article = build_article_for_ticker(ticker, %{title: "Re-analyze block"})
+      build_news_analysis(%{article_id: article.id, verdict: :skip})
+
+      {:ok, _view, html} = live(conn, ~p"/analyze/#{article.id}")
+
+      assert html =~ ~r/<button[^>]*phx-click="re_analyze"[^>]*disabled/
+    end
+
+    test ":show mode server guard rejects programmatic re_analyze",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "RGD"})
+      article = build_article_for_ticker(ticker, %{title: "Re-analyze guard"})
+      build_news_analysis(%{article_id: article.id, verdict: :skip})
+
+      {:ok, view, _html} = live(conn, ~p"/analyze/#{article.id}")
+
+      html = render_hook(view, "re_analyze", %{})
+      assert html =~ "Set up your trader profile"
     end
   end
 end

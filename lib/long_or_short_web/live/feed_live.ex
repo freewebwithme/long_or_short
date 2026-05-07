@@ -59,19 +59,31 @@ defmodule LongOrShortWeb.FeedLive do
   def handle_event("analyze", %{"id" => article_id}, socket) do
     actor = socket.assigns.current_user
 
-    case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
-      {:ok, article} ->
-        spawn_analyzer(article, actor, self())
+    if is_nil(actor.trading_profile) do
+      # Server-side guard — the UI gate (LON-102) makes this unreachable
+      # under normal use, but multi-tab sessions or scripted clients could
+      # still send the event. Never let the analyzer run profile-less.
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "Set up your trader profile at /profile before running analysis."
+       )}
+    else
+      case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
+        {:ok, article} ->
+          spawn_analyzer(article, actor, self())
 
-        socket =
-          socket
-          |> update(:analyzing_ids, &MapSet.put(&1, article_id))
-          |> stream_insert(:articles, article)
+          socket =
+            socket
+            |> update(:analyzing_ids, &MapSet.put(&1, article_id))
+            |> stream_insert(:articles, article)
 
-        {:noreply, socket}
+          {:noreply, socket}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Article not found.")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Article not found.")}
+      end
     end
   end
 
@@ -237,6 +249,7 @@ defmodule LongOrShortWeb.FeedLive do
               article={article}
               analysis={extract_analysis(article)}
               analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+              analyze_disabled?={is_nil(@current_user.trading_profile)}
               expanded?={MapSet.member?(@expanded_ids, article.id)}
             />
           </div>

@@ -77,19 +77,30 @@ defmodule LongOrShortWeb.DashboardLive do
   def handle_event("analyze", %{"id" => article_id}, socket) do
     actor = socket.assigns.current_user
 
-    case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
-      {:ok, article} ->
-        spawn_analyzer(article, actor, self())
+    if is_nil(actor.trading_profile) do
+      # Server-side guard — UI gate (LON-102) makes this normally unreachable,
+      # but multi-tab or scripted clients could still send the event.
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "Set up your trader profile at /profile before running analysis."
+       )}
+    else
+      case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
+        {:ok, article} ->
+          spawn_analyzer(article, actor, self())
 
-        socket =
-          socket
-          |> update(:analyzing_ids, &MapSet.put(&1, article_id))
-          |> replace_article_in_lists(article)
+          socket =
+            socket
+            |> update(:analyzing_ids, &MapSet.put(&1, article_id))
+            |> replace_article_in_lists(article)
 
-        {:noreply, socket}
+          {:noreply, socket}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Article not found.")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Article not found.")}
+      end
     end
   end
 
@@ -254,12 +265,14 @@ defmodule LongOrShortWeb.DashboardLive do
             news={@news}
             analyzing_ids={@analyzing_ids}
             expanded_ids={@expanded_ids}
+            analyze_disabled?={is_nil(@current_user.trading_profile)}
           />
           <.watchlist_news_card
             :if={@watchlist != []}
             news={@watchlist_news}
             analyzing_ids={@analyzing_ids}
             expanded_ids={@expanded_ids}
+            analyze_disabled?={is_nil(@current_user.trading_profile)}
           />
         </div>
       </div>
@@ -415,6 +428,7 @@ defmodule LongOrShortWeb.DashboardLive do
   attr :news, :list, required: true
   attr :analyzing_ids, :any, required: true
   attr :expanded_ids, :any, required: true
+  attr :analyze_disabled?, :boolean, required: true
 
   defp all_news_card(assigns) do
     ~H"""
@@ -431,6 +445,7 @@ defmodule LongOrShortWeb.DashboardLive do
           article={article}
           analysis={extract_analysis(article)}
           analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+          analyze_disabled?={@analyze_disabled?}
           expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="all"
         />
@@ -442,6 +457,7 @@ defmodule LongOrShortWeb.DashboardLive do
   attr :news, :list, required: true
   attr :analyzing_ids, :any, required: true
   attr :expanded_ids, :any, required: true
+  attr :analyze_disabled?, :boolean, required: true
 
   defp watchlist_news_card(assigns) do
     ~H"""
@@ -458,6 +474,7 @@ defmodule LongOrShortWeb.DashboardLive do
           article={article}
           analysis={extract_analysis(article)}
           analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+          analyze_disabled?={@analyze_disabled?}
           expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="watchlist"
         />

@@ -50,6 +50,20 @@ defmodule LongOrShortWeb.LiveUserAuth do
     {:cont, socket}
   end
 
+  # Loads `:trading_profile` onto `current_user` so authenticated LiveViews
+  # can decide whether to gate the Analyze flow without each one repeating
+  # the preload in its own `mount/3`. LON-102.
+  def on_mount(:preload_trading_profile, _params, _session, socket) do
+    case socket.assigns[:current_user] do
+      %{} = user ->
+        loaded = Ash.load!(user, :trading_profile, authorize?: false)
+        {:cont, assign(socket, :current_user, loaded)}
+
+      _ ->
+        {:cont, socket}
+    end
+  end
+
   defp assign_current_path_hook(_params, uri, socket) do
     path = URI.parse(uri).path || "/"
     {:cont, Phoenix.Component.assign(socket, :current_path, path)}

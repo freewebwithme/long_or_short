@@ -206,6 +206,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
   describe "analysis card rendering" do
     setup %{conn: conn} do
       user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
       conn = log_in_user(conn, user)
       {:ok, conn: conn, user: user}
     end
@@ -254,9 +255,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
 
     test "click Analyze enters analyzing state with skeleton + spinner",
-         %{conn: conn, user: user} do
-      build_trading_profile(%{user_id: user.id})
-
+         %{conn: conn} do
       test_pid = self()
 
       # Stub blocks until released — keeps Task pending so we can
@@ -364,6 +363,37 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
       assert html =~ "border-dashed"
       assert html =~ "Phase 1 stub"
+    end
+  end
+
+  describe "Analyze gate (no TradingProfile)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders Analyze as a /profile link with tooltip", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "GATE"})
+      build_article_for_ticker(ticker, %{title: "Gated article"})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      assert html =~ "Set up your trader profile"
+      assert html =~ ~s|href="/profile"|
+      refute html =~ ~s|phx-click="analyze"|
+    end
+
+    test "server-side guard rejects programmatic analyze events", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "GUARD"})
+      article = build_article_for_ticker(ticker, %{title: "Guarded article"})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      # Bypass the disabled UI by dispatching the event directly
+      html = render_hook(view, "analyze", %{"id" => article.id})
+
+      assert html =~ "Set up your trader profile"
     end
   end
 end

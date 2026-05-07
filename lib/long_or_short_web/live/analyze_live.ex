@@ -117,6 +117,14 @@ defmodule LongOrShortWeb.AnalyzeLive do
     actor = socket.assigns.current_user
 
     cond do
+      is_nil(actor.trading_profile) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Set up your trader profile at /profile before running analysis."
+         )}
+
       symbol == "" ->
         {:noreply, assign(socket, :form_errors, %{symbol: "required"})}
 
@@ -157,8 +165,18 @@ defmodule LongOrShortWeb.AnalyzeLive do
   def handle_event("re_analyze", _params, socket) do
     article = socket.assigns.article
     actor = socket.assigns.current_user
-    spawn_analyzer(article, actor, self())
-    {:noreply, assign(socket, :analyzing?, true)}
+
+    if is_nil(actor.trading_profile) do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "Set up your trader profile at /profile before running analysis."
+       )}
+    else
+      spawn_analyzer(article, actor, self())
+      {:noreply, assign(socket, :analyzing?, true)}
+    end
   end
 
   def handle_event("toggle_detail", _params, socket) do
@@ -235,6 +253,19 @@ defmodule LongOrShortWeb.AnalyzeLive do
             </p>
           </div>
 
+          <div
+            :if={is_nil(@current_user.trading_profile)}
+            id="analyze-profile-gate"
+            class="alert alert-warning max-w-2xl mb-4"
+          >
+            <span>
+              You need a trader profile before the analyzer can personalize results.
+              <.link navigate={~p"/profile"} class="link link-hover font-semibold">
+                Set up your profile →
+              </.link>
+            </span>
+          </div>
+
           <div class="card bg-base-200 border border-base-300 p-6 max-w-2xl">
             <form id="analyze-form" phx-submit="analyze">
               <div class="mb-4">
@@ -277,7 +308,11 @@ defmodule LongOrShortWeb.AnalyzeLive do
               </div>
 
               <div class="flex justify-end">
-                <button type="submit" class="btn btn-primary btn-sm gap-2">
+                <button
+                  type="submit"
+                  class="btn btn-primary btn-sm gap-2"
+                  disabled={is_nil(@current_user.trading_profile)}
+                >
                   <.icon name="hero-play" class="size-4" /> Analyze
                 </button>
               </div>
@@ -288,7 +323,11 @@ defmodule LongOrShortWeb.AnalyzeLive do
             <button phx-click="new_analysis" class="btn btn-ghost btn-sm gap-1">
               <.icon name="hero-arrow-left" class="size-4" /> New analysis
             </button>
-            <button phx-click="re_analyze" class="btn btn-outline btn-sm gap-1">
+            <button
+              phx-click="re_analyze"
+              class="btn btn-outline btn-sm gap-1"
+              disabled={is_nil(@current_user.trading_profile)}
+            >
               <.icon name="hero-arrow-path" class="size-4" /> Re-analyze
             </button>
           </div>
@@ -298,6 +337,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
             article={@article}
             analysis={extract_analysis(@article)}
             analyzing?={@analyzing?}
+            analyze_disabled?={is_nil(@current_user.trading_profile)}
             expanded?={@expanded?}
           />
         <% end %>
