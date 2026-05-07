@@ -28,7 +28,8 @@ defmodule LongOrShortWeb.Router do
     ash_authentication_live_session :authenticated_routes,
       on_mount: [
         {LongOrShortWeb.LiveUserAuth, :live_user_required},
-        {LongOrShortWeb.LiveUserAuth, :assign_current_path}
+        {LongOrShortWeb.LiveUserAuth, :assign_current_path},
+        {LongOrShortWeb.LiveUserAuth, :preload_trading_profile}
       ] do
       live "/", DashboardLive, :index
       live "/feed", FeedLive, :index

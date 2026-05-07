@@ -29,12 +29,17 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
       pulling `article.news_analysis` (or whatever source) and passing
       a struct or nil — no Ash `NotLoaded` should reach here.
     * `:analyzing?` — true while the analyzer is running for this article
+    * `:analyze_disabled?` — true when the user has no `TradingProfile`
+      yet. Renders the Analyze button as a muted link to `/profile` with
+      a tooltip explaining why; the analyzer is never invoked profile-
+      less so the LLM call isn't wasted on a generic persona (LON-102).
     * `:expanded?` — whether the Detail view is open
     * `:context` — short string for hook id disambiguation (default `"card"`)
   """
   attr :article, :map, required: true
   attr :analysis, :any, default: nil
   attr :analyzing?, :boolean, default: false
+  attr :analyze_disabled?, :boolean, default: false
   attr :expanded?, :boolean, default: false
   attr :context, :string, default: "card"
 
@@ -67,6 +72,7 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
         <.analyze_status
           analyzing?={@analyzing?}
           has_analysis?={not is_nil(@analysis)}
+          disabled?={@analyze_disabled?}
           article_id={@article.id}
         />
       </div>
@@ -93,6 +99,7 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
 
   attr :analyzing?, :boolean, required: true
   attr :has_analysis?, :boolean, required: true
+  attr :disabled?, :boolean, required: true
   attr :article_id, :string, required: true
 
   defp analyze_status(assigns) do
@@ -105,8 +112,22 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
       <span class="loading loading-spinner loading-xs"></span> Analyzing…
     </span>
 
+    <span
+      :if={not @analyzing? and not @has_analysis? and @disabled?}
+      class="tooltip tooltip-left"
+      data-tip="Set up your trader profile to enable AI analysis."
+    >
+      <.link
+        navigate={~p"/profile"}
+        class="text-xs px-2 py-0.5 rounded bg-base-300 text-base-content opacity-60 flex-shrink-0
+      hover:opacity-100"
+      >
+        Analyze
+      </.link>
+    </span>
+
     <button
-      :if={not @analyzing? and not @has_analysis?}
+      :if={not @analyzing? and not @has_analysis? and not @disabled?}
       type="button"
       phx-click="analyze"
       phx-value-id={@article_id}

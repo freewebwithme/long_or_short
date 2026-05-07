@@ -165,27 +165,60 @@ defmodule LongOrShortWeb.ProfileLiveTest do
       {:ok, conn: conn, user: user}
     end
 
-    test "shows CTA when user has no trading profile", %{conn: conn} do
+    test "shows blank form with 'Select one...' prompts when no profile exists", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/profile")
 
-      assert html =~ "Create your trader profile"
-      refute html =~ ~s|id="trading-profile-form"|
+      assert html =~ ~s|id="trading-profile-form"|
+      assert html =~ "Select one..."
+      assert html =~ "First time?"
+      refute html =~ "Create your trader profile"
     end
 
-    test "clicking CTA creates a profile and renders the edit form", %{conn: conn, user: user} do
+    test "first valid submit creates the trading profile via :upsert", %{conn: conn, user: user} do
+      assert {:ok, nil} = Accounts.get_trading_profile_by_user(user.id, authorize?: false)
+
       {:ok, view, _html} = live(conn, ~p"/profile")
 
       html =
         view
-        |> element("button[phx-click='create_trading_profile']")
-        |> render_click()
+        |> form("#trading-profile-form", %{
+          "form" => %{
+            "trading_style" => "swing",
+            "time_horizon" => "multi_week",
+            "market_cap_focuses" => [],
+            "catalyst_preferences" => [],
+            "notes" => ""
+          }
+        })
+        |> render_submit()
 
-      assert html =~ ~s|id="trading-profile-form"|
-      refute html =~ "Create your trader profile"
+      assert html =~ "Trader profile updated"
 
       {:ok, profile} = Accounts.get_trading_profile_by_user(user.id, authorize?: false)
-      assert profile.trading_style == :momentum_day
-      assert profile.time_horizon == :intraday
+      assert profile.trading_style == :swing
+      assert profile.time_horizon == :multi_week
+    end
+
+    test "submitting with empty trading_style or time_horizon is rejected", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      view
+      |> form("#trading-profile-form", %{
+        "form" => %{
+          "trading_style" => "",
+          "time_horizon" => "",
+          "market_cap_focuses" => [],
+          "catalyst_preferences" => [],
+          "notes" => ""
+        }
+      })
+      |> render_submit()
+
+      # Schema rejects nil — no row should have been created
+      assert {:ok, nil} = Accounts.get_trading_profile_by_user(user.id, authorize?: false)
     end
 
     test "shows the edit form (not the CTA) when profile already exists", %{conn: conn, user: user} do
