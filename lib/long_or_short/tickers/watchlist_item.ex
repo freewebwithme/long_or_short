@@ -21,6 +21,10 @@ defmodule LongOrShort.Tickers.WatchlistItem do
   - `:destroy` (default) — hard delete by item ID.
   - `:list_for_user` — all items for a given user, ordered newest first,
     with `:ticker` pre-loaded.
+  - `:list_all` — every item across all users, with `:ticker` pre-loaded.
+    System-only; intended for global derived state (e.g. the live-price
+    WebSocket subscription union). Cross-user reads must use
+    `authorize?: false`.
 
   ## Policies
 
@@ -96,6 +100,10 @@ defmodule LongOrShort.Tickers.WatchlistItem do
       argument :user_id, :uuid, allow_nil?: false
       filter expr(user_id == ^arg(:user_id))
       prepare build(sort: [created_at: :desc], load: [:ticker])
+    end
+
+    read :list_all do
+      prepare build(sort: [created_at: :asc], load: [:ticker])
     end
   end
 
