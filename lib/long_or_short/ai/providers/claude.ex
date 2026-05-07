@@ -36,6 +36,54 @@ defmodule LongOrShort.AI.Providers.Claude do
     * `{:network_error, reason}` — transport failure
     * `{:invalid_response, body}` — JSON shape unexpected
     * `:no_api_key` — `:anthropic_api_key` is unset
+
+  ## Prompt caching (LON-38)
+
+  The `system` block and the last entry in `tools` are marked with
+  `cache_control: %{type: "ephemeral"}`. Anthropic caches the request
+  prefix through the last breakpoint in body order
+  (`system → tools → messages`), so the static prompt prefix
+  (system instructions + tool schema) is cached for ~5 minutes and
+  reused at ~10% the input-token cost. The per-article user message is
+  always non-cached.
+
+  `usage` returned to callers includes `cache_creation_input_tokens`
+  and `cache_read_input_tokens` so callers can observe hit rate. A
+  `[:long_or_short, :ai, :claude, :call]` telemetry event is emitted
+  on every successful response with the same measurements.
+
+  ### Minimum cacheable prefix (the gotcha)
+
+  Anthropic silently skips caching when the cacheable prefix is below
+  a model-specific threshold. As of late 2025:
+
+    * Sonnet 4.6 — **2048 tokens**
+    * Sonnet 4.5 / 4 / 3.7 — 1024 tokens
+    * Opus 4.5+ — 4096 tokens
+
+  When skipped, the API returns the request normally with
+  `cache_creation_input_tokens: 0` and `cache_read_input_tokens: 0` —
+  no error, no warning. Verified empirically against Sonnet 4.6 with a
+  ~1660-token request: cache markers in the body, both cache fields
+  came back zero.
+
+  At the time of this change, the production NewsAnalysis prefix sits
+  at ~815 tokens (system ~217 + tool spec ~598), which is below the
+  Sonnet 4.6 threshold. **The wrapper is correct but caching does not
+  yet engage in production.** It will start engaging automatically —
+  no code change — once the static prefix grows past 2048 tokens
+  (e.g. when LON-107 injects dilution context, or future analysis
+  rules expand the system block). Until then, this code is
+  pre-positioned infrastructure with zero immediate cost impact and
+  zero risk: cache markers on a sub-threshold request are a no-op,
+  not an error.
+
+  ### No beta header required
+
+  Prompt caching is GA on `anthropic-version: 2023-06-01`. The
+  `anthropic-beta: prompt-caching-2024-07-31` header was needed during
+  the original beta period and is no longer required for any current
+  Claude model.
   """
   @behaviour LongOrShort.AI.Provider
 
@@ -101,14 +149,32 @@ defmodule LongOrShort.AI.Providers.Claude do
       model: Keyword.get(opts, :model) || Keyword.fetch!(config, :model),
       max_tokens: Keyword.get(opts, :max_tokens) || Keyword.fetch!(config, :max_tokens),
       messages: chat_messages,
-      tools: tools,
+      tools: mark_last_cacheable(tools),
       tool_choice: Keyword.get(opts, :tool_choice, %{type: "auto"})
     }
 
     case system do
       nil -> base
-      text -> Map.put(base, :system, text)
+      text -> Map.put(base, :system, system_blocks(text))
     end
+  end
+
+  # Wraps the system text in a single content block tagged for ephemeral
+  # caching. Anthropic accepts either a plain string or a list of blocks
+  # for the `system` parameter; the list shape is required to attach
+  # `cache_control`.
+  defp system_blocks(text) do
+    [%{type: "text", text: text, cache_control: %{type: "ephemeral"}}]
+  end
+
+  # Marks the last tool with an ephemeral cache breakpoint. Anthropic's
+  # cache prefix extends through the last `cache_control` marker in body
+  # order, so this captures the entire `system + tools` block as the
+  # cacheable prefix for prompt caching.
+  defp mark_last_cacheable([]), do: []
+
+  defp mark_last_cacheable(tools) do
+    List.update_at(tools, -1, &Map.put(&1, :cache_control, %{type: "ephemeral"}))
   end
 
   # Anthropic's Messages API rejects role:"system" inside the messages list —
@@ -147,11 +213,19 @@ defmodule LongOrShort.AI.Providers.Claude do
   end
 
   defp normalize(%{"content" => content} = body) when is_list(content) do
+    usage = extract_usage(body)
+
+    :telemetry.execute(
+      [:long_or_short, :ai, :claude, :call],
+      usage,
+      %{}
+    )
+
     {:ok,
      %{
        tool_calls: extract_tool_calls(content),
        text: extract_text(content),
-       usage: extract_usage(body)
+       usage: usage
      }}
   end
 
@@ -175,14 +249,19 @@ defmodule LongOrShort.AI.Providers.Claude do
     if text == "", do: nil, else: text
   end
 
-  defp extract_usage(%{"usage" => %{} = usage}) do
+  # Returns a stable 4-key shape regardless of whether the API emitted
+  # cache fields. Callers and the telemetry handler can both rely on
+  # the keys being present; missing fields default to 0.
+  defp extract_usage(body) do
+    usage = Map.get(body, "usage", %{})
+
     %{
-      input_tokens: usage["input_tokens"],
-      output_tokens: usage["output_tokens"]
+      input_tokens: Map.get(usage, "input_tokens", 0),
+      output_tokens: Map.get(usage, "output_tokens", 0),
+      cache_creation_input_tokens: Map.get(usage, "cache_creation_input_tokens", 0),
+      cache_read_input_tokens: Map.get(usage, "cache_read_input_tokens", 0)
     }
   end
-
-  defp extract_usage(_), do: %{}
 
   # Req 0.5 stores headers as %{name => [values]}.
   defp retry_after(%{} = headers) do
