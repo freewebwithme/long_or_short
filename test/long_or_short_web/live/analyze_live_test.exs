@@ -184,13 +184,19 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
     end
 
     test "broadcasting analysis_ready renders the card with pills",
-         %{conn: conn, article: article} do
+         %{conn: conn, user: user, article: article} do
       {:ok, view, _html} = live(conn, ~p"/analyze/#{article.id}")
 
       # Before analysis: analyzing? true because no analysis exists yet
       assert render(view) =~ "Analyzing"
 
-      analysis = build_news_analysis(%{article_id: article.id, verdict: :trade})
+      analysis =
+        build_news_analysis(%{
+          article_id: article.id,
+          user_id: user.id,
+          verdict: :trade
+        })
+
       AnalysisEvents.broadcast_analysis_ready(analysis)
 
       _ = :sys.get_state(view.pid)
@@ -202,8 +208,8 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
     end
 
     test "Re-analyze button enters analyzing state again",
-         %{conn: conn, article: article} do
-      build_news_analysis(%{article_id: article.id, verdict: :skip})
+         %{conn: conn, user: user, article: article} do
+      build_news_analysis(%{article_id: article.id, user_id: user.id, verdict: :skip})
 
       test_pid = self()
 
@@ -258,10 +264,16 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
     end
 
     test "article with existing analysis renders card (not analyzing)",
-         %{conn: conn} do
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "NVDA"})
       article = build_article_for_ticker(ticker, %{title: "NVDA earnings beat"})
-      _analysis = build_news_analysis(%{article_id: article.id, verdict: :trade})
+
+      _analysis =
+        build_news_analysis(%{
+          article_id: article.id,
+          user_id: user.id,
+          verdict: :trade
+        })
 
       {:ok, _view, html} = live(conn, ~p"/analyze/#{article.id}")
 
@@ -348,98 +360,116 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       refute html =~ "Load more"
     end
 
-    test "renders past analyses, newest first", %{conn: conn} do
+    test "renders past analyses, newest first", %{conn: conn, user: user} do
       ticker_a = build_ticker(%{symbol: "AAA"})
       ticker_b = build_ticker(%{symbol: "BBB"})
-      article_a = build_article_for_ticker(ticker_a)
-      article_b = build_article_for_ticker(ticker_b)
+      article_a = build_article_for_ticker(ticker_a, %{title: "AAA headline"})
+      article_b = build_article_for_ticker(ticker_b, %{title: "BBB headline"})
 
-      # Sequential creation → BBB stamped with later analyzed_at →
-      # BBB appears first under sort: [analyzed_at: :desc].
+      # Sequential creation → BBB has the later id (UUIDv7 timestamp prefix) →
+      # BBB appears first under sort: [id: :desc]. Both must be owned by
+      # `user` (LON-109) so the per-user policy filter surfaces them.
       build_news_analysis(%{
         article_id: article_a.id,
-        verdict: :trade,
-        headline_takeaway: "AAA take"
+        user_id: user.id,
+        verdict: :trade
       })
 
       build_news_analysis(%{
         article_id: article_b.id,
-        verdict: :skip,
-        headline_takeaway: "BBB take"
+        user_id: user.id,
+        verdict: :skip
       })
 
-      {:ok, _view, html} = live(conn, ~p"/analyze")
+      {:ok, view, _html} = live(conn, ~p"/analyze")
+      html = render(view)
 
       assert html =~ "AAA"
       assert html =~ "BBB"
-      assert html =~ "AAA take"
-      assert html =~ "BBB take"
+      assert html =~ "AAA headline"
+      assert html =~ "BBB headline"
       refute html =~ "No analyses to show"
 
-      # Sort assertion: BBB's takeaway must appear before AAA's in the markup.
-      bbb_pos = :binary.match(html, "BBB take") |> elem(0)
-      aaa_pos = :binary.match(html, "AAA take") |> elem(0)
+      # Sort assertion: BBB (newer) must appear before AAA in the markup.
+      bbb_pos = :binary.match(html, "BBB headline") |> elem(0)
+      aaa_pos = :binary.match(html, "AAA headline") |> elem(0)
       assert bbb_pos < aaa_pos, "expected BBB (newer) before AAA in rendered list"
     end
 
-    test "row links to /analyze/:article_id", %{conn: conn} do
+    test "row links to /analyze/:article_id", %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "ZZZ"})
       article = build_article_for_ticker(ticker)
-      build_news_analysis(%{article_id: article.id})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
 
       {:ok, _view, html} = live(conn, ~p"/analyze")
 
       assert html =~ ~s|href="/analyze/#{article.id}"|
     end
 
-    test "ticker filter narrows the list to one ticker", %{conn: conn} do
+    test "ticker filter narrows the list to one ticker", %{conn: conn, user: user} do
       ticker_a = build_ticker(%{symbol: "FILT"})
       ticker_b = build_ticker(%{symbol: "OTHR"})
-      article_a = build_article_for_ticker(ticker_a)
-      article_b = build_article_for_ticker(ticker_b)
+      article_a = build_article_for_ticker(ticker_a, %{title: "FILT headline"})
+      article_b = build_article_for_ticker(ticker_b, %{title: "OTHR headline"})
 
-      build_news_analysis(%{article_id: article_a.id, headline_takeaway: "FILT take"})
-      build_news_analysis(%{article_id: article_b.id, headline_takeaway: "OTHR take"})
+      build_news_analysis(%{article_id: article_a.id, user_id: user.id})
+      build_news_analysis(%{article_id: article_b.id, user_id: user.id})
 
       {:ok, view, _html} = live(conn, ~p"/analyze")
 
       html = render_hook(view, "recent_filter_select", %{"symbol" => "FILT"})
 
-      assert html =~ "FILT take"
-      refute html =~ "OTHR take"
+      assert html =~ "FILT headline"
+      refute html =~ "OTHR headline"
     end
 
-    test "clearing the filter restores the full list", %{conn: conn} do
+    test "clearing the filter restores the full list", %{conn: conn, user: user} do
       ticker_a = build_ticker(%{symbol: "AAA"})
       ticker_b = build_ticker(%{symbol: "BBB"})
-      article_a = build_article_for_ticker(ticker_a)
-      article_b = build_article_for_ticker(ticker_b)
+      article_a = build_article_for_ticker(ticker_a, %{title: "AAA headline"})
+      article_b = build_article_for_ticker(ticker_b, %{title: "BBB headline"})
 
-      build_news_analysis(%{article_id: article_a.id, headline_takeaway: "AAA take"})
-      build_news_analysis(%{article_id: article_b.id, headline_takeaway: "BBB take"})
+      build_news_analysis(%{article_id: article_a.id, user_id: user.id})
+      build_news_analysis(%{article_id: article_b.id, user_id: user.id})
 
       {:ok, view, _html} = live(conn, ~p"/analyze")
 
       filtered = render_hook(view, "recent_filter_select", %{"symbol" => "AAA"})
-      assert filtered =~ "AAA take"
-      refute filtered =~ "BBB take"
+      assert filtered =~ "AAA headline"
+      refute filtered =~ "BBB headline"
 
       cleared = render_hook(view, "recent_filter_clear", %{})
-      assert cleared =~ "AAA take"
-      assert cleared =~ "BBB take"
+      assert cleared =~ "AAA headline"
+      assert cleared =~ "BBB headline"
     end
 
-    test "load_more appends the next page when more results exist", %{conn: conn} do
+    test "another user's analyses are not visible", %{conn: conn} do
+      # Cross-user isolation proof: an analysis owned by a different
+      # trader must not leak into this trader's history list.
+      other = build_trader_user()
+      ticker = build_ticker(%{symbol: "OTH"})
+      article = build_article_for_ticker(ticker, %{title: "leaked headline"})
+      build_news_analysis(%{article_id: article.id, user_id: other.id})
+
+      {:ok, _view, html} = live(conn, ~p"/analyze")
+
+      refute html =~ "leaked headline"
+      assert html =~ "No analyses to show"
+    end
+
+    test "load_more appends the next page when more results exist", %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "PAGN"})
 
       # 21 analyses → first page returns 20 with more?: true; load_more
       # delivers the 21st and clears the more? flag. Zero-padded markers
-      # ("Take 01" .. "Take 21") so substring assertions unambiguously
-      # match exactly one row — "Take 1" would otherwise match Take 10–19.
+      # ("Take 01" .. "Take 21") on the article title so substring
+      # assertions unambiguously match exactly one row — "Take 1" would
+      # otherwise match Take 10–19.
       for i <- 1..21 do
         marker = "Take " <> String.pad_leading(Integer.to_string(i), 2, "0")
         article = build_article_for_ticker(ticker, %{title: marker})
-        build_news_analysis(%{article_id: article.id, headline_takeaway: marker})
+
+        build_news_analysis(%{article_id: article.id, user_id: user.id})
       end
 
       {:ok, view, html} = live(conn, ~p"/analyze")

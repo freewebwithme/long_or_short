@@ -186,6 +186,16 @@ defmodule LongOrShort.News.Article do
 
     has_one :news_analysis, LongOrShort.Analysis.NewsAnalysis do
       public? true
+
+      # Per-user scoping (LON-109): an article can have many
+      # NewsAnalysis rows after the identity swap to
+      # `(article_id, user_id)`. This filter keeps the existing
+      # has_one cardinality by scoping to the current actor's row.
+      # Call-sites that `load: [:news_analysis]` continue to work
+      # unchanged. `authorize?: false` callers without an actor
+      # see this load as nil — they should fetch explicitly via
+      # `Analysis.get_news_analysis_by_article/2` instead.
+      filter expr(user_id == ^actor(:id))
     end
   end
 

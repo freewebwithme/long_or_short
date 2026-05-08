@@ -72,11 +72,20 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
 
     references do
       reference :article, on_delete: :restrict, on_update: :update
+      reference :user, on_delete: :restrict, on_update: :update
+    end
+
+    custom_indexes do
+      # Per-user history is the dominant query after LON-109: the
+      # `:recent` action scans `WHERE user_id = ? ORDER BY id DESC` for
+      # the /analyze history surface (LON-108). Composite covers both
+      # the predicate and the sort.
+      index [:user_id, :id], name: "news_analyses_user_id_id_index"
     end
   end
 
   identities do
-    identity :unique_article, [:article_id]
+    identity :unique_article_user, [:article_id, :user_id]
   end
 
   attributes do
@@ -270,10 +279,18 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
       attribute_writable? true
       public? true
     end
+
+    belongs_to :user, LongOrShort.Accounts.User do
+      allow_nil? false
+      attribute_writable? true
+      public? true
+      description "Trader who triggered this analysis. Different traders' analyses of the same article are distinct rows (per `:unique_article_user` identity)."
+    end
   end
 
   @fields [
     :article_id,
+    :user_id,
     :catalyst_strength,
     :catalyst_type,
     :sentiment,
@@ -310,7 +327,7 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
 
     create :upsert do
       upsert? true
-      upsert_identity :unique_article
+      upsert_identity :unique_article_user
 
       accept @fields
 
@@ -375,18 +392,21 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
 
       ## Per-user scoping (LON-109)
 
-      Lists every row across all users today. The action gains a
-      `user_id == ^actor(:id)` clause once LON-109 adds `:user_id`
-      — that ticket blocks LON-107 and is on the critical path
-      before any external traffic (Phase 4). Trader read policy
-      and this filter move together.
+      Per-user scoping is enforced by the trader read policy
+      (`expr(user_id == ^actor(:id))`), not by this action's
+      filter. Authorized trader callers see only their own rows;
+      `authorize?: false` callers (tests, future admin tooling)
+      see every row. Keeping the actor-scoping in the policy
+      layer means this action's filter stays focused on its own
+      semantic argument (`:ticker_id`) and `authorize?: false`
+      remains a meaningful escape hatch.
 
       ## Index
 
-      Sort uses the primary key index — no custom index needed.
-      Once LON-109 adds `:user_id`, the dominant query becomes
-      per-user history; that ticket adds a composite
-      `(user_id, id desc)` index.
+      Backed by `news_analyses_user_id_id_index` —
+      `(user_id, id)`. Postgres uses it for the per-user
+      `WHERE user_id = ? ORDER BY id DESC` scan that this action
+      drives.
       """
 
       argument :ticker_id, :uuid
@@ -410,8 +430,14 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
       authorize_if always()
     end
 
+    # Trader read scope: a trader sees only their own analyses. The
+    # `authorize_if expr(...)` form acts as a filter check — it
+    # appends `WHERE user_id = ^actor(:id)` to every read query
+    # (and `:get_by_article` / `:recent` / the `Article.news_analysis`
+    # has_one all flow through this). LON-15 generalises this
+    # own-row pattern across other resources.
     policy action_type(:read) do
-      authorize_if actor_present()
+      authorize_if expr(user_id == ^actor(:id))
     end
   end
 end

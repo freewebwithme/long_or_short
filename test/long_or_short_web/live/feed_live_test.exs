@@ -212,7 +212,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
 
     test "pre-analyzed article shows all 6 pills + headline_takeaway",
-         %{conn: conn} do
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "AAPL"})
 
       article =
@@ -222,7 +222,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
       # sentiment :positive, llm_provider :claude
       # plus resource defaults: pump_fade_risk :insufficient_data,
       # strategy_match :partial, repetition_count 1
-      build_news_analysis(%{article_id: article.id})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
 
       {:ok, _view, html} = live(conn, ~p"/feed")
 
@@ -292,7 +292,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
 
     test "broadcasting :news_analysis_ready replaces button with pills",
-         %{conn: conn} do
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "SKYQ"})
       article = build_article_for_ticker(ticker, %{title: "Sky Quarry RFP"})
 
@@ -303,7 +303,9 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
       # Build the analysis row (skips the actual analyzer) and broadcast
       # exactly what the analyzer would send
-      analysis = build_news_analysis(%{article_id: article.id, verdict: :skip})
+      analysis =
+        build_news_analysis(%{article_id: article.id, user_id: user.id, verdict: :skip})
+
       AnalysisEvents.broadcast_analysis_ready(analysis)
 
       # Sync: wait for LiveView to drain handle_info
@@ -316,12 +318,13 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
 
     test "click Detail toggle expands the 5 markdown sections",
-         %{conn: conn} do
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "BTBD"})
       article = build_article_for_ticker(ticker, %{title: "BTBD news"})
 
       build_news_analysis(%{
         article_id: article.id,
+        user_id: user.id,
         detail_summary: "Test summary body.",
         detail_positives: "- Strong partner\n- Solid balance sheet",
         detail_concerns: "- Float dilution risk",
@@ -351,13 +354,13 @@ defmodule LongOrShortWeb.FeedLiveTest do
     end
 
     test "Phase 1 stub fields render with dashed border + tooltip",
-         %{conn: conn} do
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "TEST"})
       article = build_article_for_ticker(ticker, %{title: "Test article"})
 
       # Fixture omits :pump_fade_risk and :strategy_match → resource
       # defaults (:insufficient_data and :partial) apply
-      build_news_analysis(%{article_id: article.id})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
 
       {:ok, _view, html} = live(conn, ~p"/feed")
 

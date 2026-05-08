@@ -268,7 +268,8 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert html =~ "loading-spinner"
     end
 
-    test "broadcasting :news_analysis_ready updates the dashboard card", %{conn: conn} do
+    test "broadcasting :news_analysis_ready updates the dashboard card",
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "BCST"})
       article = build_article_for_ticker(ticker, %{title: "Broadcast news"})
 
@@ -278,7 +279,9 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert render(view) =~ ~s|phx-click="analyze"|
 
       # Build the analysis and broadcast exactly what the analyzer would send
-      analysis = build_news_analysis(%{article_id: article.id, verdict: :skip})
+      analysis =
+        build_news_analysis(%{article_id: article.id, user_id: user.id, verdict: :skip})
+
       AnalysisEvents.broadcast_analysis_ready(analysis)
 
       # Drain handle_info
@@ -289,13 +292,15 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       refute html =~ ~s|phx-click="analyze"|
     end
 
-    test "toggle_detail does not crash and expands article detail", %{conn: conn} do
+    test "toggle_detail does not crash and expands article detail",
+         %{conn: conn, user: user} do
       ticker = build_ticker(%{symbol: "TGL"})
       article = build_article_for_ticker(ticker, %{title: "Toggle news"})
 
       analysis =
         build_news_analysis(%{
           article_id: article.id,
+          user_id: user.id,
           verdict: :skip,
           detail_summary: "DETAIL_SUMMARY_FIXTURE_MARKER"
         })

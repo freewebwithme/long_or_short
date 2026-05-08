@@ -32,9 +32,16 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
   ## Actor handling
 
   The caller passes their own user struct in `opts[:actor]` — that's
-  the trader whose `TradingProfile` shapes the prompt. The persistence
-  write uses `SystemActor` internally so trader's read-only policy on
-  `NewsAnalysis` doesn't block the analyzer.
+  the trader whose `TradingProfile` shapes the prompt and whose `:id`
+  is recorded on the persisted row as `:user_id` (LON-109). The
+  upsert key `(:article_id, :user_id)` means re-analyzing as the same
+  trader updates their own row; analyzing as a different trader
+  produces a distinct row.
+
+  The persistence write itself runs as `SystemActor` so the trader's
+  own-row read policy on `NewsAnalysis` doesn't block the analyzer's
+  upsert. Authorization actor and data attribution are deliberately
+  separate concerns.
 
   ## Phase 1 stubs
 
@@ -188,9 +195,15 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
          {:ok, sentiment} <- to_enum_atom(:sentiment, input["sentiment"], @sentiments),
          {:ok, verdict} <- to_enum_atom(:verdict, input["verdict"], @verdicts) do
       ticker = article.ticker
+      actor = Keyword.fetch!(opts, :actor)
 
       attrs = %{
         article_id: article.id,
+        # Trader who triggered this analysis (LON-109). The persistence
+        # call still runs as SystemActor for authorization, but this
+        # attribute carries the trader identity into the upsert key
+        # `(:article_id, :user_id)`.
+        user_id: actor.id,
         # Card signals (from LLM)
         catalyst_strength: catalyst_strength,
         catalyst_type: catalyst_type,
