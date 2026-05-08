@@ -23,6 +23,7 @@ defmodule LongOrShort.Analysis do
         get?: true,
         not_found_error?: false
 
+      define :list_recent_analyses, action: :recent
       define :destroy_news_analysis, action: :destroy
     end
   end

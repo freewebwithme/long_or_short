@@ -348,6 +348,57 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
       argument :article_id, :uuid, allow_nil?: false
       filter expr(article_id == ^arg(:article_id))
     end
+
+    read :recent do
+      description """
+      Recent NewsAnalysis rows for the /analyze history surface
+      (LON-108). Ordered by `id` desc — UUIDv7 is timestamp-ordered
+      and globally unique, so it produces near-chronological
+      ordering by *first analysis time* without the keyset
+      precision hazards that hit DateTime sorts.
+
+      ## Why `id` desc and not `analyzed_at` desc
+
+      Sorting by `analyzed_at` was the obvious choice (re-analyzed
+      articles would jump to the top), but Ash's keyset cursor
+      empirically drops rows on the second page when the sort
+      column is a `utc_datetime_usec`. Reproduced reliably with 21
+      sequential creates: page 1 returned 20 rows with `more?: true`,
+      page 2 returned 0 rows despite 1 unread row. Same class of
+      issue documented in `LongOrShort.News.Article.:recent`.
+
+      Trade-off: re-analyzing an old article does not push it to
+      the top of the history list. Re-analysis is uncommon in
+      practice, and silent row-skipping in pagination is the worse
+      data-integrity outcome. UUIDv7 sort gives ~chronological
+      order anyway; the only divergence is the re-analyze case.
+
+      ## Per-user scoping (LON-109)
+
+      Lists every row across all users today. The action gains a
+      `user_id == ^actor(:id)` clause once LON-109 adds `:user_id`
+      — that ticket blocks LON-107 and is on the critical path
+      before any external traffic (Phase 4). Trader read policy
+      and this filter move together.
+
+      ## Index
+
+      Sort uses the primary key index — no custom index needed.
+      Once LON-109 adds `:user_id`, the dominant query becomes
+      per-user history; that ticket adds a composite
+      `(user_id, id desc)` index.
+      """
+
+      argument :ticker_id, :uuid
+
+      pagination keyset?: true, required?: false, default_limit: 20
+
+      filter expr(
+               is_nil(^arg(:ticker_id)) or article.ticker_id == ^arg(:ticker_id)
+             )
+
+      prepare build(sort: [id: :desc], load: [article: [:ticker]])
+    end
   end
 
   policies do
