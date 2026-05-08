@@ -72,6 +72,7 @@ defmodule LongOrShort.Analysis.NewsAnalyzerTest do
       {:ok, %NewsAnalysis{} = analysis} = NewsAnalyzer.analyze(article, actor: user)
 
       assert analysis.article_id == article.id
+      assert analysis.user_id == user.id
       assert analysis.catalyst_strength == :strong
       assert analysis.catalyst_type == :partnership
       assert analysis.sentiment == :positive
