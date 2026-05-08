@@ -20,22 +20,30 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.{News, Tickers}
+  alias LongOrShort.{Analysis, News, Tickers}
   alias LongOrShort.Analysis.{Events, NewsAnalyzer}
-  alias LongOrShortWeb.Live.Components.{ArticleComponents, TickerAutocomplete}
+  alias LongOrShortWeb.Live.Components.{ArticleComponents, NewsComponents, TickerAutocomplete}
+
+  @recent_page_limit 20
 
   # ── Mount ─────────────────────────────────────────────────────────────
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok,
-     socket
-     |> assign(:ticker_query, "")
-     |> assign(:ticker_results, [])
-     |> assign(:article, nil)
-     |> assign(:analyzing?, false)
-     |> assign(:expanded?, true)
-     |> assign(:form_errors, %{})}
+    socket =
+      socket
+      |> assign(:ticker_query, "")
+      |> assign(:ticker_results, [])
+      |> assign(:article, nil)
+      |> assign(:analyzing?, false)
+      |> assign(:expanded?, true)
+      |> assign(:form_errors, %{})
+      |> assign(:recent_filter_query, "")
+      |> assign(:recent_filter_results, [])
+      |> assign(:recent_filter_ticker_id, nil)
+      |> load_recent_analyses(%{})
+
+    {:ok, socket}
   end
 
   # ── Params ────────────────────────────────────────────────────────────
@@ -157,7 +165,8 @@ defmodule LongOrShortWeb.AnalyzeLive do
              |> push_patch(to: ~p"/analyze/#{article.id}")}
 
           {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Could not save article: #{format_error(reason)}")}
+            {:noreply,
+             put_flash(socket, :error, "Could not save article: #{format_error(reason)}")}
         end
     end
   end
@@ -187,13 +196,89 @@ defmodule LongOrShortWeb.AnalyzeLive do
     {:noreply, push_navigate(socket, to: ~p"/analyze")}
   end
 
+  # ── History filter + pagination (LON-108) ─────────────────────────────
+
+  def handle_event("recent_filter_search", %{"query" => query}, socket) do
+    query = String.trim(query)
+    actor = socket.assigns.current_user
+
+    results =
+      case query do
+        "" ->
+          []
+
+        q ->
+          case Tickers.search_tickers(q, actor: actor) do
+            {:ok, list} -> list
+            _ -> []
+          end
+      end
+
+    {:noreply,
+     socket
+     |> assign(:recent_filter_query, query)
+     |> assign(:recent_filter_results, results)}
+  end
+
+  def handle_event("recent_filter_select", %{"symbol" => symbol}, socket) do
+    actor = socket.assigns.current_user
+
+    case Tickers.get_ticker_by_symbol(symbol, actor: actor) do
+      {:ok, ticker} ->
+        {:noreply,
+         socket
+         |> assign(:recent_filter_query, ticker.symbol)
+         |> assign(:recent_filter_results, [])
+         |> assign(:recent_filter_ticker_id, ticker.id)
+         |> load_recent_analyses(%{ticker_id: ticker.id})}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("recent_filter_clear", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:recent_filter_query, "")
+     |> assign(:recent_filter_results, [])
+     |> assign(:recent_filter_ticker_id, nil)
+     |> load_recent_analyses(%{})}
+  end
+
+  def handle_event("load_more_recent", _params, socket) do
+    actor = socket.assigns.current_user
+    args = filter_args(socket)
+
+    case Analysis.list_recent_analyses(args,
+           actor: actor,
+           page: [limit: @recent_page_limit, after: socket.assigns.recent_cursor]
+         ) do
+      {:ok, %Ash.Page.Keyset{results: analyses, more?: more}} ->
+        socket =
+          analyses
+          |> Enum.reduce(socket, fn analysis, sock ->
+            stream_insert(sock, :recent_analyses, analysis, at: -1)
+          end)
+          |> assign(:recent_cursor, last_keyset(analyses) || socket.assigns.recent_cursor)
+          |> assign(:recent_more?, more)
+          |> update(:recent_count, &(&1 + length(analyses)))
+
+        {:noreply, socket}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   # ── Info ──────────────────────────────────────────────────────────────
 
   @impl true
   def handle_info({:news_analysis_ready, _analysis}, socket) do
     article = socket.assigns.article
 
-    case News.get_article(article.id, load: [:ticker, :news_analysis],
+    case News.get_article(article.id,
+           load: [:ticker, :news_analysis],
            actor: socket.assigns.current_user
          ) do
       {:ok, refreshed} ->
@@ -287,8 +372,10 @@ defmodule LongOrShortWeb.AnalyzeLive do
               <div class="mb-4">
                 <label class="text-sm font-medium block mb-1">Source</label>
                 <select name="source" class="select select-sm select-bordered">
-                  <option :for={{label, val} <- [{"Benzinga", "benzinga"}, {"Other", "other"}]}
-                    value={val}>
+                  <option
+                    :for={{label, val} <- [{"Benzinga", "benzinga"}, {"Other", "other"}]}
+                    value={val}
+                  >
                     {label}
                   </option>
                 </select>
@@ -318,6 +405,68 @@ defmodule LongOrShortWeb.AnalyzeLive do
               </div>
             </form>
           </div>
+
+          <section class="mt-8 max-w-2xl">
+            <h2 class="text-lg font-semibold mb-3">Recent analyses</h2>
+
+            <div class="mb-3">
+              <TickerAutocomplete.ticker_autocomplete
+                query={@recent_filter_query}
+                results={@recent_filter_results}
+                search_event="recent_filter_search"
+                select_event="recent_filter_select"
+                clear_event="recent_filter_clear"
+              />
+            </div>
+
+            <div
+              :if={@recent_count == 0}
+              class="px-3 py-6 text-center text-sm opacity-60 italic border border-base-300 rounded"
+            >
+              No analyses to show. Run one above to start your history.
+            </div>
+
+            <div
+              id="recent-analyses"
+              phx-update="stream"
+              class={[
+                "divide-y divide-base-300 border border-base-300 rounded",
+                @recent_count == 0 && "hidden"
+              ]}
+            >
+              <div :for={{dom_id, analysis} <- @streams.recent_analyses} id={dom_id}>
+                <.link
+                  navigate={~p"/analyze/#{analysis.article.id}"}
+                  class="block px-3 py-2 hover:bg-base-200 transition"
+                >
+                  <div class="flex items-center gap-3 text-sm">
+                    <span class="font-bold w-14 shrink-0">
+                      {analysis.article.ticker.symbol}
+                    </span>
+                    <span class="text-xs opacity-50 w-24 shrink-0 tabular-nums">
+                      {Calendar.strftime(analysis.analyzed_at, "%m/%d %H:%M")}
+                    </span>
+                    <span class="flex-1 truncate">{analysis.article.title}</span>
+                    <NewsComponents.news_pill
+                      emoji="🚦"
+                      value={analysis.verdict}
+                      field={:verdict}
+                    />
+                  </div>
+                </.link>
+              </div>
+            </div>
+
+            <div :if={@recent_more?} class="flex justify-center mt-3">
+              <button
+                type="button"
+                phx-click="load_more_recent"
+                class="btn btn-outline btn-sm"
+              >
+                Load more
+              </button>
+            </div>
+          </section>
         <% else %>
           <div class="flex items-center justify-between mb-4">
             <button phx-click="new_analysis" class="btn btn-ghost btn-sm gap-1">
@@ -368,4 +517,45 @@ defmodule LongOrShortWeb.AnalyzeLive do
   defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
   defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
   defp format_error(reason), do: inspect(reason)
+
+  # ── History helpers (LON-108) ─────────────────────────────────────────
+
+  defp load_recent_analyses(socket, filter_args) do
+    actor = socket.assigns.current_user
+
+    case Analysis.list_recent_analyses(filter_args,
+           actor: actor,
+           page: [limit: @recent_page_limit]
+         ) do
+      {:ok, %Ash.Page.Keyset{results: analyses, more?: more}} ->
+        socket
+        |> assign(:recent_count, length(analyses))
+        |> assign(:recent_cursor, last_keyset(analyses))
+        |> assign(:recent_more?, more)
+        |> stream(:recent_analyses, analyses, reset: true)
+
+      _ ->
+        socket
+        |> assign(:recent_count, 0)
+        |> assign(:recent_cursor, nil)
+        |> assign(:recent_more?, false)
+        |> stream(:recent_analyses, [], reset: true)
+    end
+  end
+
+  defp filter_args(socket) do
+    case socket.assigns.recent_filter_ticker_id do
+      nil -> %{}
+      id -> %{ticker_id: id}
+    end
+  end
+
+  defp last_keyset([]), do: nil
+
+  defp last_keyset(items) do
+    case List.last(items) do
+      %{__metadata__: %{keyset: cursor}} -> cursor
+      _ -> nil
+    end
+  end
 end

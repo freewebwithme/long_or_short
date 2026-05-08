@@ -330,4 +330,128 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       assert html =~ "Set up your trader profile"
     end
   end
+
+  # ── Recent analyses section (LON-108) ────────────────────────────────
+
+  describe "Recent analyses section (LON-108)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "shows empty-state message when no analyses exist", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/analyze")
+
+      assert html =~ "Recent analyses"
+      assert html =~ "No analyses to show"
+      refute html =~ "Load more"
+    end
+
+    test "renders past analyses, newest first", %{conn: conn} do
+      ticker_a = build_ticker(%{symbol: "AAA"})
+      ticker_b = build_ticker(%{symbol: "BBB"})
+      article_a = build_article_for_ticker(ticker_a)
+      article_b = build_article_for_ticker(ticker_b)
+
+      # Sequential creation → BBB stamped with later analyzed_at →
+      # BBB appears first under sort: [analyzed_at: :desc].
+      build_news_analysis(%{
+        article_id: article_a.id,
+        verdict: :trade,
+        headline_takeaway: "AAA take"
+      })
+
+      build_news_analysis(%{
+        article_id: article_b.id,
+        verdict: :skip,
+        headline_takeaway: "BBB take"
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/analyze")
+
+      assert html =~ "AAA"
+      assert html =~ "BBB"
+      assert html =~ "AAA take"
+      assert html =~ "BBB take"
+      refute html =~ "No analyses to show"
+
+      # Sort assertion: BBB's takeaway must appear before AAA's in the markup.
+      bbb_pos = :binary.match(html, "BBB take") |> elem(0)
+      aaa_pos = :binary.match(html, "AAA take") |> elem(0)
+      assert bbb_pos < aaa_pos, "expected BBB (newer) before AAA in rendered list"
+    end
+
+    test "row links to /analyze/:article_id", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "ZZZ"})
+      article = build_article_for_ticker(ticker)
+      build_news_analysis(%{article_id: article.id})
+
+      {:ok, _view, html} = live(conn, ~p"/analyze")
+
+      assert html =~ ~s|href="/analyze/#{article.id}"|
+    end
+
+    test "ticker filter narrows the list to one ticker", %{conn: conn} do
+      ticker_a = build_ticker(%{symbol: "FILT"})
+      ticker_b = build_ticker(%{symbol: "OTHR"})
+      article_a = build_article_for_ticker(ticker_a)
+      article_b = build_article_for_ticker(ticker_b)
+
+      build_news_analysis(%{article_id: article_a.id, headline_takeaway: "FILT take"})
+      build_news_analysis(%{article_id: article_b.id, headline_takeaway: "OTHR take"})
+
+      {:ok, view, _html} = live(conn, ~p"/analyze")
+
+      html = render_hook(view, "recent_filter_select", %{"symbol" => "FILT"})
+
+      assert html =~ "FILT take"
+      refute html =~ "OTHR take"
+    end
+
+    test "clearing the filter restores the full list", %{conn: conn} do
+      ticker_a = build_ticker(%{symbol: "AAA"})
+      ticker_b = build_ticker(%{symbol: "BBB"})
+      article_a = build_article_for_ticker(ticker_a)
+      article_b = build_article_for_ticker(ticker_b)
+
+      build_news_analysis(%{article_id: article_a.id, headline_takeaway: "AAA take"})
+      build_news_analysis(%{article_id: article_b.id, headline_takeaway: "BBB take"})
+
+      {:ok, view, _html} = live(conn, ~p"/analyze")
+
+      filtered = render_hook(view, "recent_filter_select", %{"symbol" => "AAA"})
+      assert filtered =~ "AAA take"
+      refute filtered =~ "BBB take"
+
+      cleared = render_hook(view, "recent_filter_clear", %{})
+      assert cleared =~ "AAA take"
+      assert cleared =~ "BBB take"
+    end
+
+    test "load_more appends the next page when more results exist", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "PAGN"})
+
+      # 21 analyses → first page returns 20 with more?: true; load_more
+      # delivers the 21st and clears the more? flag. Zero-padded markers
+      # ("Take 01" .. "Take 21") so substring assertions unambiguously
+      # match exactly one row — "Take 1" would otherwise match Take 10–19.
+      for i <- 1..21 do
+        marker = "Take " <> String.pad_leading(Integer.to_string(i), 2, "0")
+        article = build_article_for_ticker(ticker, %{title: marker})
+        build_news_analysis(%{article_id: article.id, headline_takeaway: marker})
+      end
+
+      {:ok, view, html} = live(conn, ~p"/analyze")
+
+      # Take 01 was created first → oldest → on page 2, not page 1.
+      refute html =~ "Take 01"
+      assert html =~ "Load more"
+
+      html = render_click(view, "load_more_recent")
+
+      assert html =~ "Take 01"
+      refute html =~ "Load more"
+    end
+  end
 end
