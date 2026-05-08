@@ -133,6 +133,32 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Filings ingestion (LON-106 epic, Stage 1)
+# Children of LongOrShort.Filings.SourceSupervisor. Defaults to []
+# until LON-112 wires the DB sink (`Filings.ingest_filing/1`).
+config :long_or_short, :enabled_filing_sources, []
+
+# Form types polled by LongOrShort.Filings.Sources.SecEdgar.
+# Each atom must be a key in SecEdgar's `@form_type_map`.
+config :long_or_short,
+       :dilution_filing_types,
+       [
+         :s1,
+         :s1a,
+         :s3,
+         :s3a,
+         :_424b1,
+         :_424b2,
+         :_424b3,
+         :_424b4,
+         :_424b5,
+         :_8k,
+         :_13d,
+         :_13g,
+         :def14a,
+         :form4
+       ]
+
 # AI provider — defaults to Claude in dev/prod, overridden in test
 config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude
 

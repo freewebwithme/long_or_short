@@ -20,6 +20,7 @@ defmodule LongOrShort.Application do
         {Phoenix.PubSub, name: LongOrShort.PubSub},
         LongOrShort.News.Dedup,
         LongOrShort.News.SourceSupervisor,
+        LongOrShort.Filings.SourceSupervisor,
         {Task.Supervisor, name: LongOrShort.Analysis.TaskSupervisor},
         # Start to serve requests, typically the last entry
         LongOrShortWeb.Endpoint,

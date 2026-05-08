@@ -30,7 +30,7 @@ defmodule LongOrShort.Sources.SourceState do
       allow_nil? false
       primary_key? true
       public? true
-      constraints one_of: [:finnhub, :sec, :benzinga, :pr_newswire]
+      constraints one_of: [:finnhub, :sec, :sec_filings, :benzinga, :pr_newswire]
     end
 
     attribute :last_success_at, :utc_datetime_usec do
