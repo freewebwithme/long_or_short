@@ -189,6 +189,30 @@ config :long_or_short, LongOrShort.AI.Providers.Claude,
   base_url: "https://api.anthropic.com",
   anthropic_version: "2023-06-01"
 
+# Filing-extraction model map (LON-113).
+#
+# Two-level mapping: provider module → tier atom → concrete model ID.
+#
+# `LongOrShort.Filings.Extractor.Router` — an AI-model dispatch helper,
+# **unrelated to `Phoenix.Router` / HTTP routing** — picks a tier
+# (`:cheap` / `:complex`) per filing type. The tier is intentionally
+# provider-agnostic ("how strong does this call need to be?"), so
+# adding a new provider (e.g. Qwen via LON-104) is just one extra
+# entry below — no code change in the Router or Extractor.
+#
+# Example future shape:
+#
+#     LongOrShort.AI.Providers.Qwen => %{
+#       cheap: "qwen-turbo",
+#       complex: "qwen-plus"
+#     }
+config :long_or_short, :filing_extraction_models, %{
+  LongOrShort.AI.Providers.Claude => %{
+    cheap: "claude-haiku-4-5-20251001",
+    complex: "claude-sonnet-4-6"
+  }
+}
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
