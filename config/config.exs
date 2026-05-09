@@ -134,10 +134,30 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Filings ingestion (LON-106 epic, Stage 1)
-# Children of LongOrShort.Filings.SourceSupervisor. Defaults to []
-# until LON-112 wires the DB sink (`Filings.ingest_filing/1`).
+# Filings ingestion (LON-106 epic).
+# Children of LongOrShort.Filings.SourceSupervisor. Defaults to [];
+# enable per environment (dev / prod) once a feeder cadence is decided.
 config :long_or_short, :enabled_filing_sources, []
+
+# Sink for parsed filings — routes through the Filings Ash domain
+# (LON-112).
+#
+# We expose the sink as a swappable function rather than calling
+# `Filings.ingest_filing/1` directly from the Pipeline because:
+#
+#   1. Test isolation — pipeline unit tests inject their own sink
+#      via the state map or `Application.put_env`, so they verify
+#      dispatch behavior without touching the database.
+#   2. Compile decoupling — `LongOrShort.Filings.Sources.*` would
+#      otherwise have to know about the `Filings` domain at compile
+#      time. Routing through app env keeps Sources unaware of who
+#      consumes its output.
+#   3. Environment routing — leaves room for non-DB sinks later
+#      (dry-run mode, Kafka tee, archival, etc.) via config alone,
+#      no code change required.
+#
+# Same pattern as `:ai_provider` below.
+config :long_or_short, :filings_ingest_fun, &LongOrShort.Filings.ingest_filing/1
 
 # Form types polled by LongOrShort.Filings.Sources.SecEdgar.
 # Each atom must be a key in SecEdgar's `@form_type_map`.
