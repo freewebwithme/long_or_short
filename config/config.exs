@@ -81,7 +81,8 @@ config :long_or_short,
     LongOrShort.News,
     LongOrShort.Tickers,
     LongOrShort.Sources,
-    LongOrShort.Analysis
+    LongOrShort.Analysis,
+    LongOrShort.Filings
   ]
 
 # Configure the endpoint
