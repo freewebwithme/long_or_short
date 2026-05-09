@@ -140,8 +140,23 @@ config :phoenix, :json_library, Jason
 config :long_or_short, :enabled_filing_sources, []
 
 # Sink for parsed filings — routes through the Filings Ash domain
-# (LON-112). Pipeline unit tests inject their own sink via the state
-# map or `Application.put_env`, so this default does not affect them.
+# (LON-112).
+#
+# We expose the sink as a swappable function rather than calling
+# `Filings.ingest_filing/1` directly from the Pipeline because:
+#
+#   1. Test isolation — pipeline unit tests inject their own sink
+#      via the state map or `Application.put_env`, so they verify
+#      dispatch behavior without touching the database.
+#   2. Compile decoupling — `LongOrShort.Filings.Sources.*` would
+#      otherwise have to know about the `Filings` domain at compile
+#      time. Routing through app env keeps Sources unaware of who
+#      consumes its output.
+#   3. Environment routing — leaves room for non-DB sinks later
+#      (dry-run mode, Kafka tee, archival, etc.) via config alone,
+#      no code change required.
+#
+# Same pattern as `:ai_provider` below.
 config :long_or_short, :filings_ingest_fun, &LongOrShort.Filings.ingest_filing/1
 
 # Form types polled by LongOrShort.Filings.Sources.SecEdgar.
