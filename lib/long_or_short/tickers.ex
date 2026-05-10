@@ -21,6 +21,16 @@ defmodule LongOrShort.Tickers do
        Tickers.add_to_watchlist(%{user_id: user.id, ticker_id: ticker.id}, actor: user)
        Tickers.remove_from_watchlist(item_id, actor: user)
        Tickers.list_watchlist(user.id, actor: user)
+
+  ## Cross-resource aggregators
+
+  Beyond the action-backed code interface above, the domain exposes
+  aggregators that compose multiple resources into a ticker-scoped
+  view. These do not take an `actor:` — they operate on public
+  regulatory data where per-user scoping has no semantic meaning
+  (same ticker → same answer for every consumer).
+
+      Tickers.get_dilution_profile(ticker.id)        # LON-116, Stage 4
   """
 
   use Ash.Domain
@@ -70,5 +80,33 @@ defmodule LongOrShort.Tickers do
       _ ->
         []
     end
+  end
+
+  @doc """
+  Per-ticker dilution profile — LON-116, Stage 4.
+
+  Aggregates `LongOrShort.Filings.FilingAnalysis` rows into a single
+  dilution overhang summary: severity, active ATM lifecycle, pending
+  S-1, warrant overhang, recent reverse splits, `data_completeness`.
+
+  See `LongOrShort.Tickers.DilutionProfile` for the full output
+  shape, the hybrid window-vs-lifecycle aggregation model, and the
+  Phase 1 simplifications.
+
+  Consumers:
+
+    * **Stage 5** (LON-117) — `NewsAnalyzer` injects this into its
+      LLM prompt so news verdicts become dilution-aware.
+    * **Stage 6** — `/dilution/:ticker` UI renders it directly.
+
+  Options:
+
+    * `:as_of` — `DateTime.t()`; reference time for the window
+      cutoff. Test-only override.
+  """
+  @spec get_dilution_profile(Ash.UUID.t(), keyword()) ::
+          LongOrShort.Tickers.DilutionProfile.t()
+  def get_dilution_profile(ticker_id, opts \\ []) do
+    LongOrShort.Tickers.DilutionProfile.get(ticker_id, opts)
   end
 end
