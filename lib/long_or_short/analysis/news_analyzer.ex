@@ -66,7 +66,7 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
 
   require Logger
 
-  alias LongOrShort.{AI, Accounts, Analysis, News}
+  alias LongOrShort.{AI, Accounts, Analysis, News, Tickers}
   alias LongOrShort.AI.{Prompts, Tools}
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.Analysis.{Events, NewsAnalysis}
@@ -119,11 +119,12 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
     with {:ok, article} <- ensure_ticker_loaded(article),
          {:ok, profile} <- load_profile(actor),
          {:ok, prior} <- load_prior_articles(article, window, limit),
-         messages = Prompts.NewsAnalysis.build(article, prior, profile),
+         dilution_profile = load_dilution_profile(article, opts),
+         messages = Prompts.NewsAnalysis.build(article, prior, profile, dilution_profile),
          tools = [Tools.NewsAnalysis.spec()],
          {:ok, response} <- call_ai(messages, tools, opts),
          {:ok, tool_input} <- extract_tool_call(response),
-         {:ok, attrs} <- build_attrs(article, tool_input, response, opts),
+         {:ok, attrs} <- build_attrs(article, tool_input, response, dilution_profile, opts),
          {:ok, analysis} <- persist(attrs) do
       Events.broadcast_analysis_ready(analysis)
       {:ok, analysis}
@@ -165,6 +166,21 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
     end
   end
 
+  # LON-117: pull the ticker's dilution overhang profile so it can be
+  # injected into the prompt and snapshotted on the persisted row.
+  # The `:dilution_profile` opt is a test-only override — production
+  # callers don't pass it, and the function falls back to a live
+  # `Tickers.get_dilution_profile/1`. The profile is **always** a map
+  # (never nil): `Tickers.get_dilution_profile/1` returns a fully-shaped
+  # `:insufficient` map when no data exists, so the prompt builder's
+  # `data_completeness` branch always has something to render.
+  defp load_dilution_profile(article, opts) do
+    case Keyword.fetch(opts, :dilution_profile) do
+      {:ok, profile} -> profile
+      :error -> Tickers.get_dilution_profile(article.ticker_id)
+    end
+  end
+
   defp call_ai(messages, tools, opts) do
     case AI.call(messages, tools, opts) do
       {:ok, _} = ok ->
@@ -187,7 +203,7 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
     {:error, :no_tool_call}
   end
 
-  defp build_attrs(article, input, response, opts) do
+  defp build_attrs(article, input, response, dilution_profile, opts) do
     with {:ok, catalyst_strength} <-
            to_enum_atom(:catalyst_strength, input["catalyst_strength"], @catalyst_strengths),
          {:ok, catalyst_type} <-
@@ -222,6 +238,13 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
         price_at_analysis: ticker.last_price,
         float_shares_at_analysis: ticker.float_shares,
         rvol_at_analysis: nil,
+        # Dilution snapshot at analysis time (LON-117) — frozen view of
+        # the dilution profile that the LLM saw when producing this
+        # verdict. Drives both queryability ("show all SHORT verdicts
+        # where dilution was critical") and audit reproduction.
+        dilution_severity_at_analysis: dilution_severity_snapshot(dilution_profile),
+        dilution_flags_at_analysis: dilution_profile.flags,
+        dilution_summary_at_analysis: dilution_summary_snapshot(dilution_profile),
         # Phase 1 stubs (explicit, not relying on attribute defaults)
         pump_fade_risk: :insufficient_data,
         strategy_match: :partial,
@@ -230,11 +253,50 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
         llm_provider: provenance_provider(),
         llm_model: resolve_model(opts),
         input_tokens: get_in(response, [:usage, :input_tokens]),
-        output_tokens: get_in(response, [:usage, :output_tokens])
+        output_tokens: get_in(response, [:usage, :output_tokens]),
+        raw_response: build_raw_response(response, dilution_profile)
       }
 
       {:ok, attrs}
     end
+  end
+
+  # ── Dilution snapshot helpers (LON-117) ────────────────────────────
+
+  # `:unknown` is distinct from `:none`: we don't know vs we know
+  # there's nothing. Matches the prompt's "no data → unknown, not
+  # clean" rule so the persisted row is consistent with the prompt
+  # the LLM saw.
+  defp dilution_severity_snapshot(%{data_completeness: :insufficient}), do: :unknown
+  defp dilution_severity_snapshot(%{overall_severity: severity}), do: severity
+
+  defp dilution_summary_snapshot(%{data_completeness: :insufficient}),
+    do: "Unknown — no dilution data in last 180 days"
+
+  defp dilution_summary_snapshot(%{
+         overall_severity: severity,
+         overall_severity_reason: reason
+       }) do
+    upper = severity |> Atom.to_string() |> String.upcase()
+    "#{upper} — #{reason || "(no reason)"}"
+  end
+
+  # Persists the full LLM response plus the dilution profile under
+  # the `"dilution_profile"` key for audit reproduction. The Jason
+  # encode/decode round-trip is the simplest way to guarantee a
+  # JSONB-safe shape (atom keys → string keys, DateTime → ISO 8601,
+  # Decimal → string preserving precision). Lossy for atom *values*
+  # — they become strings — which is fine for audit since the
+  # queryable contract lives in the inline snapshot columns.
+  defp build_raw_response(response, dilution_profile) do
+    raw = %{
+      tool_calls: response[:tool_calls] || [],
+      text: response[:text],
+      usage: response[:usage] || %{},
+      dilution_profile: dilution_profile
+    }
+
+    raw |> Jason.encode!() |> Jason.decode!()
   end
 
   defp to_enum_atom(field, value, allowed) when is_atom(value) do

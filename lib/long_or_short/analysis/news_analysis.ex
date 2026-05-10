@@ -34,11 +34,19 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
     - **Snapshot at analysis time** — `:price_at_analysis`,
       `:float_shares_at_analysis`, `:rvol_at_analysis`. Frozen at create —
       what the trader was looking at when they clicked Analyze.
+    - **Dilution snapshot at analysis time** (LON-117) —
+      `:dilution_severity_at_analysis`, `:dilution_flags_at_analysis`,
+      `:dilution_summary_at_analysis`. Mirrors the profile shape from
+      `LongOrShort.Tickers.get_dilution_profile/1` at the moment the
+      LLM produced its verdict, so we can later query
+      "show all SHORT verdicts where dilution was critical" without
+      re-aggregating filings, and re-running calibration against the
+      exact context the LLM saw.
     - **Strategy-match reasoning** — `:strategy_match_reasons` JSON
       breakdown of which rules passed/failed
     - **LLM provenance** — `:llm_provider`, `:llm_model`, `:input_tokens`,
-      `:output_tokens` for cost tracking (LON-35 epic) and model-drift
-      detection
+      `:output_tokens`, `:raw_response` for cost tracking (LON-35 epic),
+      model-drift detection, and full audit re-running.
 
   ## LLM fills LLM-shaped fields, code fills code-shaped fields
 
@@ -271,6 +279,53 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
       public? true
       description "Output token count — cost tracking."
     end
+
+    attribute :raw_response, :map do
+      public? true
+
+      description """
+      Full LLM response payload preserved for audit + cost analysis +
+      reproduction of `:dilution_severity_at_analysis` verdicts during
+      LON-121 calibration. The dilution profile injected into the
+      prompt is also stashed here under the `"dilution_profile"` key
+      so a future re-analysis can reproduce exactly what the LLM saw.
+      """
+    end
+
+    # ── Dilution snapshot at analysis time (LON-117) ────────────────
+    attribute :dilution_severity_at_analysis, :atom do
+      allow_nil? false
+      public? true
+      default :unknown
+      constraints one_of: [:none, :low, :medium, :high, :critical, :unknown]
+
+      description """
+      Frozen `overall_severity` from the dilution profile at the
+      moment the LLM produced its verdict. `:unknown` is used when
+      `data_completeness` was `:insufficient` — distinct from
+      `:none` (we have data, no rules fired) to keep "data missing"
+      from being misread as "definitely clean."
+      """
+    end
+
+    attribute :dilution_flags_at_analysis, {:array, :atom} do
+      allow_nil? false
+      public? true
+      default []
+      description "Frozen `profile.flags` snapshot for queryability."
+    end
+
+    attribute :dilution_summary_at_analysis, :string do
+      public? true
+
+      description """
+      One-line snapshot for display. Format:
+      `"<SEVERITY> — <reason>"` when data is present, e.g.
+      `"HIGH — ATM > 50% float (12M / 22M shares)"`. Falls back to
+      `"Unknown — no dilution data in last 180 days"` when
+      `data_completeness` was `:insufficient`.
+      """
+    end
   end
 
   relationships do
@@ -312,7 +367,11 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
     :llm_provider,
     :llm_model,
     :input_tokens,
-    :output_tokens
+    :output_tokens,
+    :raw_response,
+    :dilution_severity_at_analysis,
+    :dilution_flags_at_analysis,
+    :dilution_summary_at_analysis
   ]
   actions do
     defaults [:read, :destroy]
@@ -354,6 +413,10 @@ defmodule LongOrShort.Analysis.NewsAnalysis do
         :llm_model,
         :input_tokens,
         :output_tokens,
+        :raw_response,
+        :dilution_severity_at_analysis,
+        :dilution_flags_at_analysis,
+        :dilution_summary_at_analysis,
         :analyzed_at
       ]
 
