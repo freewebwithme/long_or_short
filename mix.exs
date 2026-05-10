@@ -58,6 +58,7 @@ defmodule LongOrShort.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:ex_cldr, "~> 2.0"},
       {:ex_money_sql, "~> 1.0"},
+      {:floki, "~> 0.36"},
       {:gettext, "~> 1.0"},
       {:heroicons,
        github: "tailwindlabs/heroicons",

@@ -21,7 +21,11 @@ config :long_or_short, Oban,
        # Daily at 04:00 UTC — SEC mapping refresh (large, run first)
        {"0 4 * * *", LongOrShort.Sec.CikSyncWorker},
        # Daily at 05:00 UTC (~1am EST) — well after US market close.
-       {"0 5 * * *", LongOrShort.Tickers.Workers.FinnhubProfileSync}
+       {"0 5 * * *", LongOrShort.Tickers.Workers.FinnhubProfileSync},
+       # Hourly at :15 — fetch SEC bodies for any new Filings (LON-119).
+       # Idempotent + batched (100/cycle), so frequent runs are cheap and
+       # keep newly-ingested filings ready for Stage 3a within ~minutes.
+       {"15 * * * *", LongOrShort.Filings.Workers.FilingBodyFetcher}
      ]}
   ]
 

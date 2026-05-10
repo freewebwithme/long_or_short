@@ -56,6 +56,14 @@ defmodule LongOrShort.Filings.Extractor do
   @dilution_type_atoms ~w(atm s1_offering s3_shelf pipe warrant_exercise convertible_conversion reverse_split none)a
   @pricing_method_atoms ~w(fixed market_minus_pct vwap_based unknown)a
 
+  # Per-section character cap for SectionFilter output. ~8K chars ≈
+  # ~2K tokens. Six full sections fit in ~12K tokens, comfortably
+  # below LLM context limits and small enough to keep cost predictable
+  # even on multi-megabyte prospectuses (LON-119). The truncated
+  # marker `[... truncated]` signals to the LLM that the section was
+  # cut, allowing it to reason about completeness.
+  @max_section_chars 8_000
+
   @typedoc "Successful extraction result."
   @type result :: %{
           filing_id: Ash.UUID.t(),
@@ -86,7 +94,11 @@ defmodule LongOrShort.Filings.Extractor do
 
     with {:ok, filing} <- ensure_loaded(filing, actor),
          {:ok, raw_text} <- raw_text(filing),
-         {:ok, sections} <- SectionFilter.filter(raw_text, filing.filing_type, filing_subtype: filing.filing_subtype),
+         {:ok, sections} <-
+           SectionFilter.filter(raw_text, filing.filing_type,
+             filing_subtype: filing.filing_subtype,
+             max_section_chars: @max_section_chars
+           ),
          :ok <- check_non_empty(sections),
          tier = Router.tier_for(filing.filing_type, filing.filing_subtype),
          provider = resolve_provider(opts),

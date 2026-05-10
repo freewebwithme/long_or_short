@@ -185,4 +185,60 @@ defmodule LongOrShort.Filings.SectionFilterTest do
       end
     end
   end
+
+  # ── max_section_chars option (LON-119) ─────────────────────────
+
+  describe "max_section_chars option" do
+    test "without the option, full body is returned" do
+      {:ok, sections} = SectionFilter.filter(@s1_sample, :s1)
+
+      for {_name, body} <- sections do
+        refute body =~ "[... truncated]"
+      end
+    end
+
+    test "caps each section body at the requested length" do
+      long_body = String.duplicate("dilution language. ", 1000)
+
+      sample = """
+      Preamble.
+
+      USE OF PROCEEDS
+
+      #{long_body}
+      """
+
+      {:ok, sections} = SectionFilter.filter(sample, :s1, max_section_chars: 100)
+      {_name, body} = List.first(sections)
+
+      # 100-char cap + ~16-char truncation marker
+      assert String.length(body) <= 200
+      assert body =~ "[... truncated]"
+      assert body =~ "dilution language"
+    end
+
+    test "passes through bodies shorter than the cap untouched" do
+      {:ok, sections} = SectionFilter.filter(@s1_sample, :s1, max_section_chars: 10_000)
+
+      for {_name, body} <- sections do
+        refute body =~ "[... truncated]"
+      end
+    end
+
+    test "applies to :full_text fallback" do
+      long_text = String.duplicate("ATM details. ", 1000)
+      sample = "ATM offering disclosure: " <> long_text
+
+      {:ok, [{:full_text, body}]} =
+        SectionFilter.filter(sample, :s1, max_section_chars: 100)
+
+      assert String.length(body) <= 200
+      assert body =~ "[... truncated]"
+    end
+
+    test "does not affect error returns (Form 4)" do
+      assert {:error, :not_supported} =
+               SectionFilter.filter("any", :form4, max_section_chars: 100)
+    end
+  end
 end

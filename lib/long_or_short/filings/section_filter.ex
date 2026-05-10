@@ -170,25 +170,35 @@ defmodule LongOrShort.Filings.SectionFilter do
 
     * `:filing_subtype` — for 8-K filings, the subtype string (e.g.
       "8-K Item 3.02") used to scope extraction to a single Item.
+    * `:max_section_chars` — when set to a positive integer, each
+      returned section's body is truncated to that character count
+      (UTF-8 char-safe via `String.slice/2`) with a "[... truncated]"
+      marker appended. Default `nil` (no cap). Used by
+      `LongOrShort.Filings.Extractor` to keep large prospectuses
+      under the LLM context budget.
   """
   @spec filter(String.t(), atom(), keyword()) ::
           {:ok, [section()]} | {:error, :not_supported}
-  def filter(raw_text, filing_type, opts \\ [])
+  def filter(raw_text, filing_type, opts \\ []) do
+    raw_text
+    |> do_filter(filing_type, opts)
+    |> apply_section_cap(opts)
+  end
 
-  def filter(_raw_text, :form4, _opts), do: {:error, :not_supported}
+  defp do_filter(_raw_text, :form4, _opts), do: {:error, :not_supported}
 
-  def filter(raw_text, filing_type, _opts) when filing_type in @prospectus_types do
+  defp do_filter(raw_text, filing_type, _opts) when filing_type in @prospectus_types do
     {:ok, prospectus_sections(raw_text)}
   end
 
-  def filter(raw_text, :_8k, opts) do
+  defp do_filter(raw_text, :_8k, opts) do
     case Keyword.get(opts, :filing_subtype) do
       nil -> {:ok, [{:full_text, raw_text}]}
       subtype when is_binary(subtype) -> {:ok, item_section(raw_text, subtype)}
     end
   end
 
-  def filter(raw_text, :def14a, _opts) do
+  defp do_filter(raw_text, :def14a, _opts) do
     if has_def14a_keywords?(raw_text) do
       {:ok, [{:full_text, raw_text}]}
     else
@@ -196,8 +206,31 @@ defmodule LongOrShort.Filings.SectionFilter do
     end
   end
 
-  def filter(raw_text, ft, _opts) when ft in [:_13d, :_13g] do
+  defp do_filter(raw_text, ft, _opts) when ft in [:_13d, :_13g] do
     {:ok, [{:full_text, raw_text}]}
+  end
+
+  # Applied to the wrapped result so error tuples (e.g. Form 4) pass
+  # through untouched.
+  defp apply_section_cap({:ok, sections}, opts) do
+    case Keyword.get(opts, :max_section_chars) do
+      nil ->
+        {:ok, sections}
+
+      max when is_integer(max) and max > 0 ->
+        capped = Enum.map(sections, fn {name, body} -> {name, truncate(body, max)} end)
+        {:ok, capped}
+    end
+  end
+
+  defp apply_section_cap(other, _opts), do: other
+
+  defp truncate(text, max) when is_binary(text) do
+    if String.length(text) <= max do
+      text
+    else
+      String.slice(text, 0, max) <> "\n[... truncated]"
+    end
   end
 
   # ── Prospectus section extraction ──────────────────────────────

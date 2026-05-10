@@ -57,6 +57,15 @@ config :long_or_short, :ai_provider, LongOrShort.AI.MockProvider
 config :long_or_short, LongOrShort.AI.Providers.Claude,
   req_plug: {Req.Test, LongOrShort.AI.Providers.Claude}
 
+# Route SEC EDGAR body fetcher HTTP through Req.Test in tests (LON-119).
+config :long_or_short, LongOrShort.Filings.BodyFetcher,
+  req_plug: {Req.Test, LongOrShort.Filings.BodyFetcher}
+
+# SEC user-agent value used by Filings.BodyFetcher and the SEC EDGAR
+# feeders. Real value lives in envs/.dev.env / runtime.exs; tests need
+# any non-empty string.
+config :long_or_short, :sec_user_agent, "LongOrShort test@example.com"
+
 config :long_or_short, :tracked_tickers_override, ~w(AAPL TSLA)
 
 config :long_or_short, :enable_price_stream, false
