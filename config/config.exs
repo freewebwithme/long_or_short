@@ -193,6 +193,16 @@ config :long_or_short,
          :form4
        ]
 
+# Window (days) for `LongOrShort.Tickers.get_dilution_profile/1`
+# window-based aggregation (LON-116, Stage 4). FilingAnalysis rows
+# whose `filing.filed_at` is older than this cutoff are excluded
+# from `pending_s1` / `warrant_overhang` / `recent_reverse_split`.
+#
+# ATM lifecycle tracking (`LongOrShort.Filings.AtmLifecycle`) is
+# intentionally *not* window-bound — an ATM registered 12 months
+# ago can still hang active capacity over the float today.
+config :long_or_short, :dilution_profile_window_days, 180
+
 # AI provider — defaults to Claude in dev/prod, overridden in test
 config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude
 
