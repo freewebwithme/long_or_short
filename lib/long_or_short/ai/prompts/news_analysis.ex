@@ -97,6 +97,16 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
   fill `repetition_count` and `repetition_summary`. Empty list is fine
   — the prompt will say so explicitly.
 
+  `dilution_profile` is the output of
+  `LongOrShort.Tickers.get_dilution_profile/1` (LON-116). The prompt
+  renders it as a "## Dilution context" block in the user message, and
+  the system prompt picks up a fixed set of dilution-handling rules
+  that apply regardless of profile content. When
+  `data_completeness == :insufficient`, the prompt explicitly tells
+  the LLM "treat as unknown — do NOT assume clean status" rather than
+  omitting the section, which would silently let the LLM default to
+  ignoring dilution risk on no-data tickers (LON-117).
+
   ## Examples
 
       iex> profile = %{
@@ -116,25 +126,42 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
       ...>   published_at: ~U[2026-04-20 12:00:00Z],
       ...>   ticker: %{symbol: "BTBD"}
       ...> }
+      iex> dilution_profile = %{
+      ...>   ticker_id: "abc",
+      ...>   overall_severity: :none,
+      ...>   overall_severity_reason: nil,
+      ...>   active_atm: nil,
+      ...>   pending_s1: nil,
+      ...>   warrant_overhang: nil,
+      ...>   recent_reverse_split: nil,
+      ...>   insider_selling_post_filing: false,
+      ...>   flags: [],
+      ...>   last_filing_at: nil,
+      ...>   data_completeness: :insufficient
+      ...> }
       iex> [system, user] =
-      ...>   LongOrShort.AI.Prompts.NewsAnalysis.build(article, [], profile)
+      ...>   LongOrShort.AI.Prompts.NewsAnalysis.build(article, [], profile, dilution_profile)
       iex> system.role
       "system"
       iex> String.contains?(system.content, "small-cap momentum day trader")
       true
       iex> String.contains?(system.content, "$2") and String.contains?(system.content, "$10")
       true
+      iex> String.contains?(system.content, "Dilution risk handling")
+      true
       iex> String.contains?(user.content, "BTBD")
+      true
+      iex> String.contains?(user.content, "do NOT assume clean")
       true
       iex> String.contains?(user.content, "no past articles")
       true
   """
-  @spec build(article(), [article()], TradingProfile.t() | map()) ::
+  @spec build(article(), [article()], TradingProfile.t() | map(), map()) ::
           [LongOrShort.AI.Provider.message()]
-  def build(article, past_articles, profile) do
+  def build(article, past_articles, profile, dilution_profile) do
     [
       %{role: "system", content: render_system_prompt(profile)},
-      %{role: "user", content: render_user_message(article, past_articles)}
+      %{role: "user", content: render_user_message(article, past_articles, dilution_profile)}
     ]
   end
 
@@ -152,11 +179,25 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
     #{render_profile_lines(profile)}
 
     #{behavioral_guidance(profile.trading_style)}
+    #{dilution_handling_rules()}
     Speak like a trader, not a research analyst. Korean is welcome where
     natural — the trader is bilingual.
     #{render_notes(profile.notes)}
     Always respond by calling the `record_news_analysis` tool. Do not
     respond in plain text.
+    """
+  end
+
+  defp dilution_handling_rules do
+    """
+    Dilution risk handling:
+      * Active ATM with market-discount pricing during a price spike → strong SHORT bias.
+      * Recent S-1 filed within 14 days during a price spike → strong SHORT bias.
+      * Death-spiral convertible flag → strong SHORT bias.
+      * Recent reverse split (within 90 days) → SHORT bias (often precedes the next dilution).
+      * High or critical overall_severity should be one of the heaviest factors in your verdict.
+      * "No dilution data" means UNKNOWN, not clean — do NOT implicitly assume the stock is dilution-free.
+    The dilution context for this ticker is in the user message under "## Dilution context".
     """
   end
 
@@ -254,7 +295,7 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
 
   # ─── User message (article + past articles) ────────────────────────
 
-  defp render_user_message(article, past_articles) do
+  defp render_user_message(article, past_articles, dilution_profile) do
     """
     Ticker: #{article.ticker.symbol}
     Source: #{article.source}
@@ -265,6 +306,7 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
     Summary:
     #{summary_or_blank(article)}
 
+    #{render_dilution_context(dilution_profile)}
     PAST ARTICLES (same ticker, recent first)
     #{format_past_articles(past_articles)}
 
@@ -289,4 +331,98 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
   defp format_past_articles(articles) do
     Enum.map_join(articles, "\n", fn a -> "- #{a.published_at} | #{a.title}" end)
   end
+
+  # ─── Dilution context (LON-117) ────────────────────────────────────
+
+  # The `:insufficient` branch is critical: omitting the section
+  # entirely would let the LLM default to ignoring dilution risk on
+  # any ticker we just don't have data for. Explicit "treat as
+  # unknown" is a safer default for a momentum trader.
+  defp render_dilution_context(%{data_completeness: :insufficient}) do
+    """
+    ## Dilution context
+      - No dilution-relevant filings found in last 180 days
+      - Treat as unknown — do NOT assume clean dilution status
+    """
+  end
+
+  defp render_dilution_context(profile) do
+    body_lines =
+      [
+        "- Overall severity: #{format_severity(profile.overall_severity)}",
+        severity_reason_line(profile.overall_severity_reason)
+      ] ++
+        active_atm_lines(profile.active_atm) ++
+        pending_s1_lines(profile.pending_s1) ++
+        warrant_overhang_lines(profile.warrant_overhang) ++
+        recent_reverse_split_lines(profile.recent_reverse_split) ++
+        insider_lines(profile.insider_selling_post_filing) ++
+        ["- Flags: #{format_flags(profile.flags)}"]
+
+    "## Dilution context\n  " <> Enum.join(body_lines, "\n  ") <> "\n"
+  end
+
+  defp format_severity(severity) when is_atom(severity),
+    do: severity |> Atom.to_string() |> String.upcase()
+
+  defp severity_reason_line(nil), do: "- Reason: (none)"
+  defp severity_reason_line(reason), do: "- Reason: #{reason}"
+
+  defp active_atm_lines(nil), do: []
+
+  defp active_atm_lines(%{
+         remaining_shares: shares,
+         pricing_method: method,
+         pricing_discount_pct: pct
+       }) do
+    ["- Active ATM: #{format_shares(shares)} shares remaining at #{format_pricing(method, pct)}"]
+  end
+
+  defp format_pricing(method, nil), do: to_string(method)
+
+  defp format_pricing(method, pct), do: "#{method} (#{Decimal.to_string(pct, :normal)}%)"
+
+  defp pending_s1_lines(nil), do: []
+
+  defp pending_s1_lines(%{deal_size_usd: amount, filed_at: filed_at}) do
+    ["- Pending S-1: #{format_dollars(amount)} filed on #{format_date(filed_at)}"]
+  end
+
+  defp warrant_overhang_lines(nil), do: []
+
+  defp warrant_overhang_lines(%{exercisable_shares: shares, avg_strike: strike}) do
+    ["- Warrant overhang: #{format_shares(shares)} shares @ avg strike #{format_strike(strike)}"]
+  end
+
+  defp format_strike(nil), do: "(unknown)"
+  defp format_strike(strike), do: "$#{Decimal.to_string(strike, :normal)}"
+
+  defp recent_reverse_split_lines(nil), do: []
+
+  defp recent_reverse_split_lines(%{ratio: ratio, executed_at: executed_at}) do
+    ["- Recent reverse split: #{ratio || "(ratio unknown)"} on #{format_date(executed_at)}"]
+  end
+
+  defp insider_lines(true),
+    do: ["- Insider selling detected after recent dilution filing"]
+
+  defp insider_lines(_), do: []
+
+  defp format_flags([]), do: "none"
+  defp format_flags(flags), do: flags |> Enum.map(&Atom.to_string/1) |> Enum.join(", ")
+
+  defp format_dollars(nil), do: "(unknown)"
+
+  defp format_dollars(amount) do
+    val = Decimal.to_float(amount)
+
+    cond do
+      val >= 1_000_000_000 -> "$#{trunc(val / 1_000_000_000)}B"
+      val >= 1_000_000 -> "$#{trunc(val / 1_000_000)}M"
+      val >= 1_000 -> "$#{trunc(val / 1_000)}K"
+      true -> "$#{trunc(val)}"
+    end
+  end
+
+  defp format_date(%DateTime{} = dt), do: dt |> DateTime.to_date() |> Date.to_string()
 end

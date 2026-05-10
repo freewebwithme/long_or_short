@@ -286,4 +286,148 @@ defmodule LongOrShort.Analysis.NewsAnalyzerTest do
       end
     end
   end
+
+  describe "analyze/2 — dilution context (LON-117)" do
+    # An `:insufficient` profile mirrors the no-FilingAnalysis-rows
+    # default; this is what `Tickers.get_dilution_profile/1` returns
+    # for a freshly-created ticker in setup. Spelling it out
+    # explicitly keeps each test self-contained.
+    defp insufficient_profile do
+      %{
+        ticker_id: "test-ticker-id",
+        overall_severity: :none,
+        overall_severity_reason: nil,
+        active_atm: nil,
+        pending_s1: nil,
+        warrant_overhang: nil,
+        recent_reverse_split: nil,
+        insider_selling_post_filing: false,
+        flags: [],
+        last_filing_at: nil,
+        data_completeness: :insufficient
+      }
+    end
+
+    defp high_severity_profile do
+      %{
+        ticker_id: "test-ticker-id",
+        overall_severity: :high,
+        overall_severity_reason: "ATM > 50% float (12M / 22M shares)",
+        active_atm: %{
+          remaining_shares: 12_000_000,
+          pricing_method: :market_minus_pct,
+          pricing_discount_pct: Decimal.new("5.0"),
+          registered_at: ~U[2026-02-15 00:00:00.000000Z],
+          used_to_date: 8_000_000,
+          last_424b_filed_at: ~U[2026-04-30 00:00:00.000000Z],
+          source_filing_ids: ["s3-id"]
+        },
+        pending_s1: nil,
+        warrant_overhang: nil,
+        recent_reverse_split: nil,
+        insider_selling_post_filing: false,
+        flags: [:large_overhang],
+        last_filing_at: ~U[2026-04-30 00:00:00.000000Z],
+        data_completeness: :high
+      }
+    end
+
+    test "with no FilingAnalysis rows for the ticker, persists :unknown snapshot", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      {:ok, analysis} = NewsAnalyzer.analyze(article, actor: user)
+
+      assert analysis.dilution_severity_at_analysis == :unknown
+      assert analysis.dilution_flags_at_analysis == []
+      assert analysis.dilution_summary_at_analysis == "Unknown — no dilution data in last 180 days"
+    end
+
+    test ":insufficient profile renders 'do NOT assume clean' branch in prompt", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      {:ok, _} =
+        NewsAnalyzer.analyze(article, actor: user, dilution_profile: insufficient_profile())
+
+      [{messages, _tools, _opts}] = MockProvider.calls()
+      [%{content: sys}, %{content: usr}] = messages
+
+      # The system rules block is the SHORT-bias guidance applied
+      # regardless of profile content — make sure it's always
+      # injected into the system prompt.
+      assert sys =~ "Dilution risk handling"
+      assert sys =~ "do NOT implicitly assume the stock is dilution-free"
+
+      # The user-side guard is the per-call data-availability
+      # signal — only renders on insufficient data.
+      assert usr =~ "## Dilution context"
+      assert usr =~ "do NOT assume clean dilution status"
+    end
+
+    test "high-severity profile flows into prompt and persists snapshot fields", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      {:ok, analysis} =
+        NewsAnalyzer.analyze(article, actor: user, dilution_profile: high_severity_profile())
+
+      # Prompt got the high-severity context.
+      [{messages, _tools, _opts}] = MockProvider.calls()
+      [_sys, %{content: usr}] = messages
+      assert usr =~ "Overall severity: HIGH"
+      assert usr =~ "ATM > 50% float (12M / 22M shares)"
+      assert usr =~ "Active ATM: 12M shares remaining"
+      assert usr =~ "Flags: large_overhang"
+
+      # And the persisted row carries a frozen snapshot of that
+      # same context — driving the "show all SHORT verdicts where
+      # dilution was critical" query LON-121 will lean on.
+      assert analysis.dilution_severity_at_analysis == :high
+      assert analysis.dilution_flags_at_analysis == [:large_overhang]
+      assert analysis.dilution_summary_at_analysis == "HIGH — ATM > 50% float (12M / 22M shares)"
+    end
+
+    test "raw_response includes the dilution_profile under 'dilution_profile' key", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      {:ok, analysis} =
+        NewsAnalyzer.analyze(article, actor: user, dilution_profile: high_severity_profile())
+
+      # Jason round-trip means atom keys come back as strings and
+      # atom values come back as strings — that's the audit shape.
+      assert %{"dilution_profile" => profile_json} = analysis.raw_response
+      assert profile_json["overall_severity"] == "high"
+      assert profile_json["data_completeness"] == "high"
+      assert profile_json["active_atm"]["remaining_shares"] == 12_000_000
+    end
+
+    test "re-analysis with a different profile updates the snapshot fields", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      {:ok, first} =
+        NewsAnalyzer.analyze(article, actor: user, dilution_profile: insufficient_profile())
+
+      assert first.dilution_severity_at_analysis == :unknown
+
+      {:ok, second} =
+        NewsAnalyzer.analyze(article, actor: user, dilution_profile: high_severity_profile())
+
+      assert second.id == first.id
+      assert second.dilution_severity_at_analysis == :high
+      assert second.dilution_summary_at_analysis == "HIGH — ATM > 50% float (12M / 22M shares)"
+    end
+  end
 end
