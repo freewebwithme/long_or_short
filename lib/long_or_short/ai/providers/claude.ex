@@ -55,28 +55,43 @@ defmodule LongOrShort.AI.Providers.Claude do
   ### Minimum cacheable prefix (the gotcha)
 
   Anthropic silently skips caching when the cacheable prefix is below
-  a model-specific threshold. As of late 2025:
+  a model-specific threshold. The numbers below are pulled from the
+  current platform.claude.com prompt-caching docs and verified
+  against this app empirically (LON-38 and LON-120):
 
-    * Sonnet 4.6 — **2048 tokens**
-    * Sonnet 4.5 / 4 / 3.7 — 1024 tokens
-    * Opus 4.5+ — 4096 tokens
+    * **Sonnet 4.6** — 2048 tokens
+    * **Haiku 4.5**  — 4096 tokens
+    * **Opus 4.5 / 4.6 / 4.7** — 4096 tokens
 
   When skipped, the API returns the request normally with
   `cache_creation_input_tokens: 0` and `cache_read_input_tokens: 0` —
-  no error, no warning. Verified empirically against Sonnet 4.6 with a
-  ~1660-token request: cache markers in the body, both cache fields
-  came back zero.
+  no error, no warning. Verified empirically:
 
-  At the time of this change, the production NewsAnalysis prefix sits
-  at ~815 tokens (system ~217 + tool spec ~598), which is below the
-  Sonnet 4.6 threshold. **The wrapper is correct but caching does not
-  yet engage in production.** It will start engaging automatically —
-  no code change — once the static prefix grows past 2048 tokens
-  (e.g. when LON-107 injects dilution context, or future analysis
-  rules expand the system block). Until then, this code is
-  pre-positioned infrastructure with zero immediate cost impact and
-  zero risk: cache markers on a sub-threshold request are a no-op,
-  not an error.
+    * Sonnet 4.6 with a ~3844-token filing-extraction request (LON-113):
+      `cache_creation_input_tokens: 3844`, then `cache_read_input_tokens: 3844`
+      on the second call — caching engaged.
+    * Haiku 4.5 with the same prompt shape (LON-113): both cache fields
+      came back `0`. Filing-extraction prefix sits above 1024 but below
+      4096 tokens — the **Haiku threshold is 2× Sonnet's**, which the
+      stale table that used to live here did not call out.
+
+  ### Where caching actually engages today (LON-120)
+
+    * **Complex tier** (Sonnet 4.6 — `s1/s1a/s3/s3a/424b/8-K Item 1.01`
+      filings, NewsAnalysis once its prefix grows past 2048): caching
+      engages on the 2nd+ call within the ~5-minute window.
+    * **Cheap tier** (Haiku 4.5 — `def14a/13d/13g/_8k`): caching does
+      **not** engage at current prompt size. The wrapper still attaches
+      `cache_control` markers — they no-op below threshold per
+      Anthropic's documented behavior. If the cheap-tier prompt grows
+      past 4096 tokens in a future ticket, caching engages
+      automatically with no code change here.
+
+  This is not a bug or platform limitation — it's a threshold
+  mismatch. The cheap-tier choice still earns its keep on base cost
+  (Haiku ~$0.80/MTok vs Sonnet ~$3/MTok), which is the actual
+  reason that tier exists; caching savings on top would have been a
+  bonus, not the design.
 
   ### No beta header required
 

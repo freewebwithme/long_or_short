@@ -176,6 +176,90 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
     end
   end
 
+  describe "call/3 — model-agnostic cache markers (LON-120)" do
+    # LON-120 investigation found that Haiku 4.5's caching no-op
+    # comes from Anthropic's minimum-prefix threshold (4096 tokens
+    # vs Sonnet 4.6's 2048), not from any model-specific behavior in
+    # our wire body. These tests guard against accidentally adding
+    # such model-specific behavior later — every model gets the
+    # same cache_control markers, Anthropic decides whether they
+    # engage based on prefix size.
+
+    test "Haiku model receives the same cache_control markers as Sonnet on the system block" do
+      messages = [
+        %{role: "system", content: "You are a trader's analyst."},
+        %{role: "user", content: "Analyze this article."}
+      ]
+
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["model"] == "claude-haiku-4-5-20251001"
+
+        assert body["system"] == [
+                 %{
+                   "type" => "text",
+                   "text" => "You are a trader's analyst.",
+                   "cache_control" => %{"type" => "ephemeral"}
+                 }
+               ]
+
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+      end)
+
+      Claude.call(messages, @tools, model: "claude-haiku-4-5-20251001")
+    end
+
+    test "Haiku model receives cache_control on the last tool" do
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["model"] == "claude-haiku-4-5-20251001"
+
+        [only] = body["tools"]
+        assert only["cache_control"] == %{"type" => "ephemeral"}
+
+        Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+      end)
+
+      Claude.call(@messages, @tools, model: "claude-haiku-4-5-20251001")
+    end
+
+    test "Sonnet and Haiku produce identical wire bodies except for the model field" do
+      messages = [
+        %{role: "system", content: "Stable system prefix."},
+        %{role: "user", content: "Per-call user content."}
+      ]
+
+      capture = fn model ->
+        ref = make_ref()
+        parent = self()
+
+        stub(fn conn ->
+          {:ok, raw, conn} = Plug.Conn.read_body(conn)
+          send(parent, {ref, Jason.decode!(raw)})
+          Req.Test.json(conn, tool_use_response("record_news_analysis", %{}))
+        end)
+
+        Claude.call(messages, @tools, model: model)
+
+        receive do
+          {^ref, body} -> body
+        after
+          0 -> flunk("no captured body for model #{model}")
+        end
+      end
+
+      sonnet_body = capture.("claude-sonnet-4-6")
+      haiku_body = capture.("claude-haiku-4-5-20251001")
+
+      # Drop the model field — that's the only legitimate diff.
+      assert Map.delete(sonnet_body, "model") == Map.delete(haiku_body, "model")
+    end
+  end
+
   describe "call/3 — usage and telemetry (LON-38)" do
     test "exposes cache token fields when the API returns them" do
       stub(fn conn ->
