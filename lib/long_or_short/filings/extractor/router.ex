@@ -48,6 +48,30 @@ defmodule LongOrShort.Filings.Extractor.Router do
   LON-41's confidence-based Haiku→Sonnet escalation will sit on top
   later — `tier_for/2`'s output becomes the *initial* tier rather
   than the final one.
+
+  ## Caching expectations (LON-120)
+
+  Whether Anthropic prompt caching actually engages is a function of
+  the **minimum cacheable prefix** for the resolved model, not of
+  this Router's choice:
+
+    * **Complex tier (Sonnet 4.6)** — 2048-token threshold. Filing
+      extraction prefix sits above this; caching engages on the
+      2nd+ call within the ~5-minute window (verified empirically
+      under LON-113).
+    * **Cheap tier (Haiku 4.5)** — 4096-token threshold. Filing
+      extraction prefix sits **below** this; caching is silently
+      skipped per Anthropic's documented behavior
+      (`cache_creation_input_tokens: 0`, no error). The Claude
+      provider still attaches `cache_control` markers — they
+      no-op until the prefix grows past 4096 tokens, at which
+      point caching engages automatically with no code change here.
+
+  This is a documented threshold mismatch, not a bug. The cheap
+  tier's value lives in its base rate (Haiku ~$0.80/MTok vs Sonnet
+  ~$3/MTok), which holds regardless of caching. See
+  `LongOrShort.AI.Providers.Claude` moduledoc for the full table
+  and empirical verification.
   """
 
   # Filing types that always go through the cheap tier regardless of subtype.
