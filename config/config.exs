@@ -13,7 +13,10 @@ config :ash_oban, pro?: false
 config :long_or_short, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [default: 10],
+  # `filings_analysis` is held to concurrency 2 because every job in
+  # this queue makes a paid LLM call (LON-115). Tuning higher means
+  # tuning provider rate limits + monthly cost simultaneously.
+  queues: [default: 10, filings_analysis: 2],
   repo: LongOrShort.Repo,
   plugins: [
     {Oban.Plugins.Cron,
@@ -25,7 +28,13 @@ config :long_or_short, Oban,
        # Hourly at :15 — fetch SEC bodies for any new Filings (LON-119).
        # Idempotent + batched (100/cycle), so frequent runs are cheap and
        # keep newly-ingested filings ready for Stage 3a within ~minutes.
-       {"15 * * * *", LongOrShort.Filings.Workers.FilingBodyFetcher}
+       {"15 * * * *", LongOrShort.Filings.Workers.FilingBodyFetcher},
+       # Every 15 min — analyze new dilution-relevant filings for
+       # watchlist tickers (LON-115, Stage 3c). Picks up FilingRaws
+       # that the body fetcher landed and runs the LLM extraction +
+       # severity scoring. Watchlist-scoped: cost is bounded by the
+       # number of tickers traders have explicitly opted into.
+       {"*/15 * * * *", LongOrShort.Filings.Workers.FilingAnalysisWorker}
      ]}
   ]
 
