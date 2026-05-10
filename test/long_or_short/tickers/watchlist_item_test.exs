@@ -1,8 +1,10 @@
 defmodule LongOrShort.Tickers.WatchlistItemTest do
   use LongOrShort.DataCase, async: true
+  use Oban.Testing, repo: LongOrShort.Repo
 
   import LongOrShort.{AccountsFixtures, TickersFixtures}
 
+  alias LongOrShort.Filings.Workers.FilingAnalysisBackfillWorker
   alias LongOrShort.Tickers
 
   describe "add_to_watchlist/2" do
@@ -147,6 +149,36 @@ defmodule LongOrShort.Tickers.WatchlistItemTest do
         )
 
       assert loaded.watchlist_items == []
+    end
+  end
+
+  describe "filing analysis backfill enqueue (LON-115)" do
+    test "enqueues a FilingAnalysisBackfillWorker job after :add succeeds" do
+      user = build_trader_user()
+      ticker = build_ticker()
+
+      {:ok, _item} =
+        Tickers.add_to_watchlist(%{user_id: user.id, ticker_id: ticker.id}, authorize?: false)
+
+      assert_enqueued(
+        worker: FilingAnalysisBackfillWorker,
+        args: %{"ticker_id" => ticker.id, "lookback_days" => 90}
+      )
+    end
+
+    test "duplicate adds for the same ticker collapse to a single job (unique constraint)" do
+      user_a = build_trader_user()
+      user_b = build_trader_user()
+      ticker = build_ticker()
+
+      Tickers.add_to_watchlist(%{user_id: user_a.id, ticker_id: ticker.id}, authorize?: false)
+      Tickers.add_to_watchlist(%{user_id: user_b.id, ticker_id: ticker.id}, authorize?: false)
+
+      jobs =
+        all_enqueued(worker: FilingAnalysisBackfillWorker)
+        |> Enum.filter(&(&1.args["ticker_id"] == ticker.id))
+
+      assert length(jobs) == 1
     end
   end
 

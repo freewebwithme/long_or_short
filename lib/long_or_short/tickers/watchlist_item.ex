@@ -17,7 +17,10 @@ defmodule LongOrShort.Tickers.WatchlistItem do
   ## Actions
 
   - `:add` — idempotent upsert. Calling it twice for the same
-    user × ticker returns the existing row without error.
+    user × ticker returns the existing row without error. After commit,
+    enqueues a `Filings.Workers.FilingAnalysisBackfillWorker` job so
+    the dilution-profile UI is populated immediately for the newly
+    watched ticker (LON-115).
   - `:destroy` (default) — hard delete by item ID.
   - `:list_for_user` — all items for a given user, ordered newest first,
     with `:ticker` pre-loaded.
@@ -32,6 +35,8 @@ defmodule LongOrShort.Tickers.WatchlistItem do
   bypass all checks; traders can read, create, and destroy. LON-15 will
   tighten the trader destroy policy to own-row-only once auth hardens.
   """
+
+  require Logger
 
   use Ash.Resource,
     otp_app: :long_or_short,
@@ -94,6 +99,33 @@ defmodule LongOrShort.Tickers.WatchlistItem do
       # :updated_at is a benign no-op write that ensures Postgres returns
       # the existing row on conflict rather than silently discarding it.
       upsert_fields [:updated_at]
+
+      # Enqueue a dilution-analysis backfill for the ticker so the
+      # /dilution UI is populated immediately rather than waiting for
+      # the next watchlist cron sweep (LON-115). The worker is
+      # `unique:` on `:ticker_id`, so multi-user adds for the same
+      # ticker collapse to one backfill. An Oban insert failure
+      # warns but does not fail the watchlist add — the cron worker
+      # will pick up new filings within 15 minutes regardless.
+      change fn changeset, _context ->
+        Ash.Changeset.after_action(changeset, fn _changeset, item ->
+          item.ticker_id
+          |> LongOrShort.Filings.Workers.FilingAnalysisBackfillWorker.new_job()
+          |> Oban.insert()
+          |> case do
+            {:ok, _job} ->
+              :ok
+
+            {:error, reason} ->
+              Logger.warning(
+                "WatchlistItem.add: failed to enqueue analysis backfill for ticker " <>
+                  "#{item.ticker_id} — #{inspect(reason)}"
+              )
+          end
+
+          {:ok, item}
+        end)
+      end
     end
 
     read :list_for_user do

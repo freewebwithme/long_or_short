@@ -121,4 +121,68 @@ defmodule LongOrShort.FilingsFixtures do
         """
     end
   end
+
+  @doc """
+  Returns a map of valid attributes for creating a FilingAnalysis.
+  Caller must supply `:filing_id` and `:ticker_id` (or use
+  `build_filing_analysis/2` which extracts them from a Filing).
+  """
+  def valid_filing_analysis_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        dilution_type: :atm,
+        deal_size_usd: nil,
+        share_count: nil,
+        pricing_method: :market_minus_pct,
+        pricing_discount_pct: nil,
+        warrant_strike: nil,
+        warrant_term_years: nil,
+        atm_remaining_shares: nil,
+        atm_total_authorized_shares: nil,
+        shelf_total_authorized_usd: nil,
+        shelf_remaining_usd: nil,
+        convertible_conversion_price: nil,
+        has_anti_dilution_clause: false,
+        has_death_spiral_convertible: false,
+        is_reverse_split_proxy: false,
+        reverse_split_ratio: nil,
+        summary: "ATM facility — sample fixture",
+        dilution_severity: :low,
+        matched_rules: [:rule_default_low],
+        severity_reason: "Default low severity",
+        extraction_quality: :high,
+        rejected_reason: nil,
+        flags: [],
+        provider: "LongOrShort.AI.MockProvider",
+        model: "claude-haiku-4-5-20251001",
+        raw_response: %{"usage" => %{"input_tokens" => 100, "output_tokens" => 50}}
+      },
+      overrides
+    )
+  end
+
+  @doc """
+  Creates a FilingAnalysis row attached to the given `filing`.
+  Pulls `:filing_id` and `:ticker_id` from the filing struct so the
+  caller does not have to repeat them.
+  """
+  def build_filing_analysis(filing, overrides \\ %{}) do
+    attrs =
+      overrides
+      |> valid_filing_analysis_attrs()
+      |> Map.put(:filing_id, filing.id)
+      |> Map.put(:ticker_id, filing.ticker_id)
+
+    case Filings.create_filing_analysis(attrs, authorize?: false) do
+      {:ok, analysis} ->
+        analysis
+
+      {:error, error} ->
+        raise """
+        Failed to create filing_analysis fixture.
+        attrs: #{inspect(attrs)}
+        error: #{inspect(error)}
+        """
+    end
+  end
 end

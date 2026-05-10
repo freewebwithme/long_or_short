@@ -136,6 +136,16 @@ defmodule LongOrShort.Filings.Filing do
       public? true
       destination_attribute :filing_id
     end
+
+    # The dilution-risk verdict from the AI pipeline (LON-115). Used by
+    # `Filings.Workers.FilingAnalysisWorker` to find unanalyzed filings
+    # via `is_nil(filing_analysis)` — Ash compiles that into a
+    # `LEFT JOIN ... WHERE filing_analyses.id IS NULL` query, which
+    # scales independent of how many analyses have accumulated.
+    has_one :filing_analysis, LongOrShort.Filings.FilingAnalysis do
+      public? true
+      destination_attribute :filing_id
+    end
   end
 
   actions do
