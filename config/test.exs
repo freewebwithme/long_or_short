@@ -57,6 +57,10 @@ config :long_or_short, :ai_provider, LongOrShort.AI.MockProvider
 config :long_or_short, LongOrShort.AI.Providers.Claude,
   req_plug: {Req.Test, LongOrShort.AI.Providers.Claude}
 
+# Route Qwen / DashScope provider HTTP through Req.Test (LON-104).
+config :long_or_short, LongOrShort.AI.Providers.Qwen,
+  req_plug: {Req.Test, LongOrShort.AI.Providers.Qwen}
+
 # Route SEC EDGAR body fetcher HTTP through Req.Test in tests (LON-119).
 config :long_or_short, LongOrShort.Filings.BodyFetcher,
   req_plug: {Req.Test, LongOrShort.Filings.BodyFetcher}

@@ -14,6 +14,47 @@ config :long_or_short, :finnhub_api_key, env!("FINNHUB_API_KEY", :string, nil)
 config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string, nil)
 config :long_or_short, :sec_user_agent, env!("SEC_USER_AGENT", :string, nil)
 
+# AI provider + Qwen region (LON-104).
+#
+# Skipped in test env so `config/test.exs`'s explicit
+# `:ai_provider, LongOrShort.AI.MockProvider` (and per-test
+# `:qwen_region` overrides) stay authoritative — runtime.exs runs
+# *after* test.exs and would otherwise clobber them.
+if config_env() != :test do
+  ai_provider =
+    case env!("AI_PROVIDER", :string, "claude") do
+      "claude" ->
+        LongOrShort.AI.Providers.Claude
+
+      "qwen" ->
+        LongOrShort.AI.Providers.Qwen
+
+      other ->
+        raise "unknown AI_PROVIDER: #{inspect(other)} (expected \"claude\" or \"qwen\")"
+    end
+
+  config :long_or_short, :ai_provider, ai_provider
+
+  qwen_region =
+    case env!("QWEN_REGION", :string, "singapore") do
+      "singapore" ->
+        :singapore
+
+      "us" ->
+        :us
+
+      other ->
+        raise "unknown QWEN_REGION: #{inspect(other)} (expected \"singapore\" or \"us\")"
+    end
+
+  config :long_or_short, :qwen_region, qwen_region
+end
+
+# API keys are read from env in every environment so a developer
+# running `mix test` against a live key (for the `:external`-tagged
+# round-trip suites) doesn't need to hand-set them.
+config :long_or_short, :qwen_api_key, env!("QWEN_API_KEY", :string, nil)
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

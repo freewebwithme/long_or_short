@@ -35,7 +35,11 @@ long_or_short-*.tar
 npm-debug.log
 /assets/node_modules/
 
-/envs/
+# Ignore everything inside /envs/ EXCEPT the example template.
+# Note: `/envs/` (directory form) would prevent re-including any
+# file beneath it, so we use the per-entry pattern instead.
+/envs/*
+!/envs/.env.example
 
 # Claude Code per-user local overrides
 .claude/settings.local.json
