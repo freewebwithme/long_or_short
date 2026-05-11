@@ -78,18 +78,18 @@ elixir -v   # → Elixir 1.19.4 (compiled with Erlang/OTP 28)
 
 ---
 
-## 2. Install PostgreSQL 17
+## 2. Install PostgreSQL 18
 
-Project migrations rely on `uuidv7()` (Postgres 17 built-in).
+Project migrations rely on `uuidv7()` (Postgres 18 built-in).
 
 ```sh
-# Add the official PostgreSQL APT repo if the distro ships < 17
+# Add the official PostgreSQL APT repo if the distro ships < 18
 sudo install -d /usr/share/postgresql-common/pgdg
 sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
   https://www.postgresql.org/media/keys/ACCC4CF8.asc
 sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 sudo apt update
-sudo apt install -y postgresql-17 postgresql-contrib-17
+sudo apt install -y postgresql-18 postgresql-contrib-18
 
 sudo systemctl enable --now postgresql
 
@@ -372,7 +372,7 @@ cleanly. uuidv7 ids never collide across machines.
 
 ## Checklist
 
-- [ ] OS + Postgres 17 + Elixir 1.19/OTP 28 installed
+- [ ] OS + Postgres 18 + Elixir 1.19/OTP 28 installed
 - [ ] GitHub SSH key registered, repo cloned to `~/projects/long_or_short`
 - [ ] `envs/.dev.env` complete with real API keys + admin credentials
 - [ ] `mix ash.setup` ran cleanly, admin user signs in at `/admin`
@@ -387,7 +387,7 @@ cleanly. uuidv7 ids never collide across machines.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `mix phx.server` fails: `(Postgrex.Error) FATAL ... password authentication failed` | DB user mismatch | `sudo -u postgres createuser -s "$USER"` again |
-| `psql -c "SELECT uuidv7()"` errors `function uuidv7() does not exist` | Postgres < 17 installed | Install `postgresql-17` from the PGDG repo (§2) |
+| `psql -c "SELECT uuidv7()"` errors `function uuidv7() does not exist` | Postgres < 18 installed | Install `postgresql-18` from the PGDG repo (§2) |
 | Server crashes after a few seconds with `:nofile` on `envs/.dev.env` | env file missing or wrong path | Check `pwd`, file must be at `envs/.dev.env` relative to the repo root |
 | Articles count stays 0 after 5+ minutes | API key empty / Alpaca paper account not generated | Re-issue keys at app.alpaca.markets, refresh `envs/.dev.env`, `restart-app` |
 | systemd service exits immediately with `mix: command not found` | asdf shim path missing in service `Environment=` | Re-add the `PATH=` line with the asdf shims directory |
