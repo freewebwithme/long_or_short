@@ -95,5 +95,24 @@ config :swoosh, :api_client, false
 
 # News ingestion sources for development. Dummy generates synthetic
 # articles every 3 seconds for end-to-end pipeline validation.
+#
+# Finnhub and Alpaca play complementary roles, not redundant ones:
+#
+#   - Finnhub polls our tracked universe per-symbol — guarantees
+#     deep, watchlist-scoped coverage of every ticker we explicitly
+#     care about (3-day history per symbol).
+#   - Alpaca (LON-128) is the market-wide firehose (no `symbols=`
+#     filter) — catches catalysts on tickers we haven't added to
+#     `priv/tracked_tickers.txt` yet (premarket movers, breakouts,
+#     macro-driven sector news).
+#
+# Both stay on indefinitely. Dedup is per `(source, external_id,
+# symbol)`, so the same catalyst landing in both feeds creates two
+# Article rows — UI groups them by `external_id` / title hash if
+# duplicate display becomes painful.
 config :long_or_short,
-  enabled_news_sources: [LongOrShort.News.Sources.Finnhub, LongOrShort.News.Sources.SecEdgar]
+  enabled_news_sources: [
+    LongOrShort.News.Sources.Alpaca,
+    LongOrShort.News.Sources.Finnhub,
+    LongOrShort.News.Sources.SecEdgar
+  ]

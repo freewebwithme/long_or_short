@@ -128,7 +128,7 @@ defmodule LongOrShort.News.Article do
     attribute :source, :atom do
       allow_nil? false
       public? true
-      constraints one_of: [:benzinga, :finnhub, :sec, :pr_newswire, :other]
+      constraints one_of: [:alpaca, :benzinga, :finnhub, :sec, :pr_newswire, :other]
       description "Originating news provider."
     end
 
