@@ -118,6 +118,8 @@ defmodule LongOrShortWeb.Live.Components.TickerAutocomplete do
         placeholder="Symbol or company"
         phx-change={@phx_change}
         phx-debounce="200"
+        phx-keydown={@clear_event}
+        phx-key="Escape"
         class="input input-sm input-bordered w-full pr-8"
       />
       <button

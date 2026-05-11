@@ -329,7 +329,10 @@ defmodule LongOrShortWeb.AnalyzeLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_user={@current_user} current_path={@current_path}>
-      <div class="max-w-4xl mx-auto p-6">
+      <div class={[
+        "mx-auto p-6",
+        if(@live_action == :new, do: "max-w-7xl", else: "max-w-4xl")
+      ]}>
         <%= if @live_action == :new do %>
           <div class="mb-6">
             <h1 class="text-2xl font-bold">Analyze a news article</h1>
@@ -341,7 +344,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
           <div
             :if={is_nil(@current_user.trading_profile)}
             id="analyze-profile-gate"
-            class="alert alert-warning max-w-2xl mb-4"
+            class="alert alert-warning mb-4"
           >
             <span>
               You need a trader profile before the analyzer can personalize results.
@@ -351,122 +354,126 @@ defmodule LongOrShortWeb.AnalyzeLive do
             </span>
           </div>
 
-          <div class="card bg-base-200 border border-base-300 p-6 max-w-2xl">
-            <form id="analyze-form" phx-submit="analyze">
-              <div class="mb-4">
-                <label class="text-sm font-medium block mb-1">Ticker</label>
+          <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+            <div class="lg:col-span-3">
+              <div class="card bg-base-200 border border-base-300 p-6">
+                <form id="analyze-form" phx-submit="analyze">
+                  <div class="mb-4">
+                    <label class="text-sm font-medium block mb-1">Ticker</label>
+                    <TickerAutocomplete.ticker_autocomplete
+                      query={@ticker_query}
+                      results={@ticker_results}
+                      search_event="ticker_search"
+                      select_event="ticker_selected"
+                      clear_event="ticker_clear"
+                      wrap_in_form={false}
+                    />
+                    <input type="hidden" name="symbol" value={@ticker_query} />
+                    <p :if={@form_errors[:symbol]} class="text-error text-xs mt-1">
+                      Ticker is required.
+                    </p>
+                  </div>
+
+                  <div class="mb-4">
+                    <label class="text-sm font-medium block mb-1">Source</label>
+                    <select name="source" class="select select-sm select-bordered">
+                      <option
+                        :for={{label, val} <- [{"Benzinga", "benzinga"}, {"Other", "other"}]}
+                        value={val}
+                      >
+                        {label}
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="mb-6">
+                    <label class="text-sm font-medium block mb-1">Paste the article</label>
+                    <textarea
+                      name="paste"
+                      rows="12"
+                      placeholder="Paste headline + body here (first line becomes the title)"
+                      class="textarea textarea-bordered w-full text-sm font-mono"
+                    ></textarea>
+                    <p :if={@form_errors[:paste]} class="text-error text-xs mt-1">
+                      Article text is required.
+                    </p>
+                  </div>
+
+                  <div class="flex justify-end">
+                    <button
+                      type="submit"
+                      class="btn btn-primary btn-sm gap-2"
+                      disabled={is_nil(@current_user.trading_profile)}
+                    >
+                      <.icon name="hero-play" class="size-4" /> Analyze
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <section class="lg:col-span-2">
+              <h2 class="text-lg font-semibold mb-3">Recent analyses</h2>
+
+              <div class="mb-3">
                 <TickerAutocomplete.ticker_autocomplete
-                  query={@ticker_query}
-                  results={@ticker_results}
-                  search_event="ticker_search"
-                  select_event="ticker_selected"
-                  clear_event="ticker_clear"
-                  wrap_in_form={false}
+                  query={@recent_filter_query}
+                  results={@recent_filter_results}
+                  search_event="recent_filter_search"
+                  select_event="recent_filter_select"
+                  clear_event="recent_filter_clear"
                 />
-                <input type="hidden" name="symbol" value={@ticker_query} />
-                <p :if={@form_errors[:symbol]} class="text-error text-xs mt-1">
-                  Ticker is required.
-                </p>
               </div>
 
-              <div class="mb-4">
-                <label class="text-sm font-medium block mb-1">Source</label>
-                <select name="source" class="select select-sm select-bordered">
-                  <option
-                    :for={{label, val} <- [{"Benzinga", "benzinga"}, {"Other", "other"}]}
-                    value={val}
+              <div
+                :if={@recent_count == 0}
+                class="px-3 py-6 text-center text-sm opacity-60 italic border border-base-300 rounded"
+              >
+                No analyses yet. Run one to start your history.
+              </div>
+
+              <div
+                id="recent-analyses"
+                phx-update="stream"
+                class={[
+                  "divide-y divide-base-300 border border-base-300 rounded",
+                  @recent_count == 0 && "hidden"
+                ]}
+              >
+                <div :for={{dom_id, analysis} <- @streams.recent_analyses} id={dom_id}>
+                  <.link
+                    navigate={~p"/analyze/#{analysis.article.id}"}
+                    class="block px-3 py-2 hover:bg-base-200 transition"
                   >
-                    {label}
-                  </option>
-                </select>
+                    <div class="flex items-center gap-2 text-sm">
+                      <span class="font-bold w-12 shrink-0">
+                        {analysis.article.ticker.symbol}
+                      </span>
+                      <span class="text-xs opacity-50 shrink-0 tabular-nums whitespace-nowrap">
+                        {Calendar.strftime(analysis.analyzed_at, "%m/%d")}
+                      </span>
+                      <span class="flex-1 truncate min-w-0">{analysis.article.title}</span>
+                      <NewsComponents.news_pill
+                        emoji="🚦"
+                        value={analysis.verdict}
+                        field={:verdict}
+                      />
+                    </div>
+                  </.link>
+                </div>
               </div>
 
-              <div class="mb-6">
-                <label class="text-sm font-medium block mb-1">Paste the article</label>
-                <textarea
-                  name="paste"
-                  rows="10"
-                  placeholder="Paste headline + body here (first line becomes the title)"
-                  class="textarea textarea-bordered w-full text-sm font-mono"
-                ></textarea>
-                <p :if={@form_errors[:paste]} class="text-error text-xs mt-1">
-                  Article text is required.
-                </p>
-              </div>
-
-              <div class="flex justify-end">
+              <div :if={@recent_more?} class="flex justify-center mt-3">
                 <button
-                  type="submit"
-                  class="btn btn-primary btn-sm gap-2"
-                  disabled={is_nil(@current_user.trading_profile)}
+                  type="button"
+                  phx-click="load_more_recent"
+                  class="btn btn-outline btn-sm"
                 >
-                  <.icon name="hero-play" class="size-4" /> Analyze
+                  Load more
                 </button>
               </div>
-            </form>
+            </section>
           </div>
-
-          <section class="mt-8 max-w-2xl">
-            <h2 class="text-lg font-semibold mb-3">Recent analyses</h2>
-
-            <div class="mb-3">
-              <TickerAutocomplete.ticker_autocomplete
-                query={@recent_filter_query}
-                results={@recent_filter_results}
-                search_event="recent_filter_search"
-                select_event="recent_filter_select"
-                clear_event="recent_filter_clear"
-              />
-            </div>
-
-            <div
-              :if={@recent_count == 0}
-              class="px-3 py-6 text-center text-sm opacity-60 italic border border-base-300 rounded"
-            >
-              No analyses to show. Run one above to start your history.
-            </div>
-
-            <div
-              id="recent-analyses"
-              phx-update="stream"
-              class={[
-                "divide-y divide-base-300 border border-base-300 rounded",
-                @recent_count == 0 && "hidden"
-              ]}
-            >
-              <div :for={{dom_id, analysis} <- @streams.recent_analyses} id={dom_id}>
-                <.link
-                  navigate={~p"/analyze/#{analysis.article.id}"}
-                  class="block px-3 py-2 hover:bg-base-200 transition"
-                >
-                  <div class="flex items-center gap-3 text-sm">
-                    <span class="font-bold w-14 shrink-0">
-                      {analysis.article.ticker.symbol}
-                    </span>
-                    <span class="text-xs opacity-50 w-24 shrink-0 tabular-nums">
-                      {Calendar.strftime(analysis.analyzed_at, "%m/%d %H:%M")}
-                    </span>
-                    <span class="flex-1 truncate">{analysis.article.title}</span>
-                    <NewsComponents.news_pill
-                      emoji="🚦"
-                      value={analysis.verdict}
-                      field={:verdict}
-                    />
-                  </div>
-                </.link>
-              </div>
-            </div>
-
-            <div :if={@recent_more?} class="flex justify-center mt-3">
-              <button
-                type="button"
-                phx-click="load_more_recent"
-                class="btn btn-outline btn-sm"
-              >
-                Load more
-              </button>
-            </div>
-          </section>
         <% else %>
           <div class="flex items-center justify-between mb-4">
             <button phx-click="new_analysis" class="btn btn-ghost btn-sm gap-1">
