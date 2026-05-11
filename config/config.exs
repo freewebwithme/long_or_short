@@ -47,7 +47,15 @@ config :long_or_short, Oban,
        # LLM extraction pipeline: Form 4 is structured XML, parsed
        # directly. Cadence is intentionally slower than the LLM
        # pipeline — Form 4 signal value is day-bound, not minute-bound.
-       {"30 * * * *", LongOrShort.Filings.Workers.Form4Worker}
+       {"30 * * * *", LongOrShort.Filings.Workers.Form4Worker},
+       # Morning catalyst boundaries (ET, Mon–Fri) — force every
+       # enabled news feeder to poll at :00 / :30 between 07:00 and
+       # 10:30 so we never miss a top-of-hour earnings / FDA / jobs
+       # release. Idempotent — dedup absorbs duplicates the regular
+       # 60s timer would otherwise produce when it fires in the same
+       # window.
+       {"0,30 7-10 * * 1-5", LongOrShort.News.MorningBoundaryPollWorker, [],
+        timezone: "America/New_York"}
      ]}
   ]
 
