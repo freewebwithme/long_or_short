@@ -210,19 +210,28 @@ defmodule LongOrShortWeb.MorningBriefLive do
               <span class="badge badge-ghost badge-sm">{source_badge(article)}</span>
             </div>
 
-            <.link
-              navigate={~p"/analyze/#{article.id}"}
-              class="font-medium hover:underline block mb-1"
-            >
+            <div class="font-medium block mb-1">
               {article.title}
-            </.link>
+            </div>
 
             <p :if={article.summary} class="text-sm opacity-80 line-clamp-2">
               {article.summary}
             </p>
 
-            <div :if={article.ticker} class="flex gap-1 mt-2">
-              <span class="badge badge-outline badge-sm">{article.ticker.symbol}</span>
+            <div class="flex items-center justify-between mt-2">
+              <div :if={article.ticker} class="flex gap-1">
+                <span class="badge badge-outline badge-sm">{article.ticker.symbol}</span>
+              </div>
+              <a
+                :if={article.url}
+                href={article.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onclick="return confirm('외부 링크로 이동합니다. 계속하시겠습니까?')"
+                class="text-xs opacity-60 hover:opacity-100 inline-flex items-center gap-1"
+              >
+                Detail <span aria-hidden="true">↗</span>
+              </a>
             </div>
           </article>
         </div>
