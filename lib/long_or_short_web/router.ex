@@ -30,6 +30,14 @@ defmodule LongOrShortWeb.Router do
     plug :require_admin
   end
 
+  # Fly.io healthcheck (LON-127). Bypasses the browser pipeline so
+  # `/health` doesn't hit fetch_session / CSRF / auth mount chains —
+  # the probe needs to succeed even when the rest of the app is
+  # degraded so Fly doesn't cycle the Machine.
+  scope "/", LongOrShortWeb do
+    get "/health", HealthController, :show
+  end
+
   scope "/", LongOrShortWeb do
     pipe_through :browser
 

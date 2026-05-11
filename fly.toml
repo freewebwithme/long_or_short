@@ -1,0 +1,47 @@
+# fly.toml — Fly.io app config for long-or-short.
+#
+# Secrets (DATABASE_URL, SECRET_KEY_BASE, TOKEN_SIGNING_SECRET,
+# ANTHROPIC_API_KEY, QWEN_API_KEY, FINNHUB_API_KEY, SEC_USER_AGENT,
+# ADMIN_EMAIL, ADMIN_PASSWORD, ...) live in `fly secrets`, NOT here.
+# See docs/deploy.md for the full list.
+
+app = "long-or-short"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PHX_HOST = "long-or-short.fly.dev"
+  PHX_SERVER = "true"
+  # Fly internal Postgres connectivity uses IPv6 (*.flycast).
+  ECTO_IPV6 = "true"
+  # AI provider defaults — overridden per-deploy if needed.
+  AI_PROVIDER = "claude"
+  QWEN_REGION = "singapore"
+
+[deploy]
+  release_command = "/app/bin/migrate"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  # Oban cron + Finnhub WebSocket must stay alive. Idle-stopping the
+  # Machine would silently miss scheduled jobs and drop the WS feed,
+  # so the Machine is pinned always-on.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "get"
+  path = "/health"
+  protocol = "http"
+  timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
