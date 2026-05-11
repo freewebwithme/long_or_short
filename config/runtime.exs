@@ -14,6 +14,11 @@ config :long_or_short, :finnhub_api_key, env!("FINNHUB_API_KEY", :string, nil)
 config :long_or_short, :anthropic_api_key, env!("ANTHROPIC_API_KEY", :string, nil)
 config :long_or_short, :sec_user_agent, env!("SEC_USER_AGENT", :string, nil)
 
+# Alpaca News API (LON-128). Paper-trading account keys work —
+# `data.alpaca.markets` accepts both paper and live credentials.
+config :long_or_short, :alpaca_api_key_id, env!("ALPACA_API_KEY_ID", :string, nil)
+config :long_or_short, :alpaca_api_secret_key, env!("ALPACA_API_SECRET_KEY", :string, nil)
+
 # AI provider + Qwen region (LON-104).
 #
 # Skipped in test env so `config/test.exs`'s explicit
