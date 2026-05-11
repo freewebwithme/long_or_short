@@ -33,6 +33,7 @@ defmodule LongOrShortWeb.DashboardLive do
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
+  alias LongOrShortWeb.MorningBrief.Bucket
 
   @news_limit 10
 
@@ -181,11 +182,13 @@ defmodule LongOrShortWeb.DashboardLive do
 
         news =
           [article | socket.assigns.news]
+          |> sort_by_published()
           |> Enum.take(@news_limit)
 
         watchlist_news =
           if MapSet.member?(socket.assigns.watchlist_ticker_ids, article.ticker_id) do
             [article | socket.assigns.watchlist_news]
+            |> sort_by_published()
             |> Enum.take(@news_limit)
           else
             socket.assigns.watchlist_news
@@ -244,7 +247,10 @@ defmodule LongOrShortWeb.DashboardLive do
           <.indices_card indices={@indices} />
           <.watchlist_card watchlist={@watchlist} />
         </div>
-        
+
+    <!-- Morning Brief preview (full width) -->
+        <.morning_brief_preview_card news={@news} />
+
     <!-- Middle: search + ticker info/news -->
         <div class="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4">
           <.search_card query={@search_query} results={@search_results} />
@@ -385,6 +391,52 @@ defmodule LongOrShortWeb.DashboardLive do
     """
   end
 
+  attr :news, :list, required: true
+
+  defp morning_brief_preview_card(assigns) do
+    ~H"""
+    <section id="dash-morning-brief" class="card bg-base-200 border border-base-300 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">Morning Brief preview</h2>
+        <span class="text-xs opacity-60">latest {length(@news)}</span>
+      </div>
+
+      <div :if={@news == []} class="italic text-xs opacity-60">
+        No news yet
+      </div>
+
+      <ul :if={@news != []} class="space-y-1.5">
+        <li
+          :for={article <- @news}
+          class="flex items-start gap-2 text-sm py-1 border-b border-base-300/40 last:border-0"
+        >
+          <span class={bucket_badge_class(article.published_at)}>
+            {bucket_label(article.published_at)}
+          </span>
+          <.link
+            navigate={~p"/analyze/#{article.id}"}
+            class="flex-1 min-w-0 truncate hover:underline"
+          >
+            {article.title}
+          </.link>
+          <span :if={article.ticker} class="badge badge-outline badge-sm shrink-0">
+            {article.ticker.symbol}
+          </span>
+          <span class="text-xs opacity-60 whitespace-nowrap shrink-0 w-16 text-right">
+            {brief_time_ago(article.published_at)}
+          </span>
+        </li>
+      </ul>
+
+      <div class="flex justify-end mt-3">
+        <.link navigate={~p"/morning"} class="btn btn-ghost btn-sm">
+          More <.icon name="hero-arrow-right" class="size-3" />
+        </.link>
+      </div>
+    </section>
+    """
+  end
+
   defp search_card(assigns) do
     ~H"""
     <section id="dash-search" class="card bg-base-200 border border-base-300 p-4">
@@ -500,14 +552,16 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   defp load_news(actor) do
-    # `:recent` is keyset-paginated (LON-100). Dashboard only ever shows
-    # the first page, so we unwrap straight to the results list.
+    # `:recent` sorts by `id: :desc` for keyset cursor stability
+    # (LON-100), which is ingest order — not source-publish order.
+    # Dashboard is a single-page snapshot, so we re-sort by
+    # `published_at` client-side. Cheap for 10 articles.
     case News.list_recent_articles(
            load: [:ticker, :news_analysis],
            actor: actor,
            page: [limit: @news_limit]
          ) do
-      {:ok, %Ash.Page.Keyset{results: articles}} -> articles
+      {:ok, %Ash.Page.Keyset{results: articles}} -> sort_by_published(articles)
       _ -> []
     end
   end
@@ -520,10 +574,14 @@ defmodule LongOrShortWeb.DashboardLive do
              load: [:ticker, :news_analysis],
              actor: actor
            ) do
-        {:ok, articles} -> articles
+        {:ok, articles} -> sort_by_published(articles)
         _ -> []
       end
     end
+  end
+
+  defp sort_by_published(articles) do
+    Enum.sort_by(articles, & &1.published_at, {:desc, DateTime})
   end
 
   defp subscribe_for_articles(articles) do
@@ -574,6 +632,42 @@ defmodule LongOrShortWeb.DashboardLive do
 
   defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a
   defp extract_analysis(_), do: nil
+
+  defp bucket_label(dt) do
+    case Bucket.bucket_for(dt) do
+      :overnight -> "Overnight"
+      :premarket -> "Premarket"
+      :opening -> "Opening"
+      :regular -> "Regular"
+      :afterhours -> "After-hours"
+      :other -> "Older"
+    end
+  end
+
+  defp bucket_badge_class(dt) do
+    color =
+      case Bucket.bucket_for(dt) do
+        :overnight -> "badge-info"
+        :premarket -> "badge-warning"
+        :opening -> "badge-success"
+        :regular -> "badge-ghost"
+        :afterhours -> "badge-primary"
+        :other -> "badge-ghost opacity-60"
+      end
+
+    "badge badge-sm shrink-0 " <> color
+  end
+
+  defp brief_time_ago(%DateTime{} = dt) do
+    seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
+
+    cond do
+      seconds < 60 -> "now"
+      seconds < 3600 -> "#{div(seconds, 60)}m"
+      seconds < 86_400 -> "#{div(seconds, 3600)}h"
+      true -> "#{div(seconds, 86_400)}d"
+    end
+  end
 
   defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
   defp format_error(:no_tool_call), do: "Model returned an unexpected response."
