@@ -101,7 +101,8 @@ config :long_or_short,
     LongOrShort.Tickers,
     LongOrShort.Sources,
     LongOrShort.Analysis,
-    LongOrShort.Filings
+    LongOrShort.Filings,
+    LongOrShort.Settings
   ]
 
 # Configure the endpoint
