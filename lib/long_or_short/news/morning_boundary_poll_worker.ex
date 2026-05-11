@@ -34,13 +34,40 @@ defmodule LongOrShort.News.MorningBoundaryPollWorker do
 
   require Logger
 
-  @impl Oban.Worker
-  def perform(_job) do
-    sources = Application.get_env(:long_or_short, :enabled_news_sources, [])
+  @et_zone "America/New_York"
 
-    Enum.each(sources, &force_poll/1)
+  @impl Oban.Worker
+  def perform(_job), do: tick(DateTime.utc_now())
+
+  @doc """
+  Runs a single boundary evaluation against the given UTC `now`.
+
+  Public so tests can inject a frozen clock — there's no
+  `Application.put_env` hack and no need to start the real feeder
+  GenServers during a test run.
+  """
+  @spec tick(DateTime.t()) :: :ok
+  def tick(now) do
+    et_now = DateTime.shift_zone!(now, @et_zone)
+
+    if boundary?(et_now), do: dispatch()
 
     :ok
+  end
+
+  # Cron fires UTC every :00 / :30 (24 × 2 = 48 invocations / day);
+  # only ~8 of those fall inside the ET morning window we actually
+  # care about. The rest return :ok without doing any work — cheap
+  # no-op compared with maintaining a DST-aware UTC cron schedule
+  # twice a year.
+  defp boundary?(%DateTime{hour: hour, minute: minute} = et_now) do
+    weekday? = Date.day_of_week(DateTime.to_date(et_now)) in 1..5
+    weekday? and hour in 7..10 and minute in [0, 30]
+  end
+
+  defp dispatch do
+    sources = Application.get_env(:long_or_short, :enabled_news_sources, [])
+    Enum.each(sources, &force_poll/1)
   end
 
   defp force_poll(module) do
