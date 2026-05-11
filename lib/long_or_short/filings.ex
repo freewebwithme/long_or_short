@@ -8,6 +8,9 @@ defmodule LongOrShort.Filings do
   (LON-119). Dilution-risk verdicts produced by the AI pipeline live in
   `LongOrShort.Filings.FilingAnalysis` (LON-115, Stage 3c).
 
+  Form 4 (insider transactions) takes a different path — see
+  "Form 4: structured XML, no LLM" below.
+
   ## Single entry point for analysis
 
   `analyze_filing/1,2` is the public surface for triggering the
@@ -17,6 +20,22 @@ defmodule LongOrShort.Filings do
   manual-trigger UI) should always go through this domain function
   rather than touching `Analyzer` directly — that keeps the domain
   module the single grep-able entry for filing operations.
+
+  ## Form 4: structured XML, no LLM (LON-118)
+
+  Form 4 (`:form4`) is the SEC's standard form for insider
+  transaction reporting. Unlike S-1 / 8-K which are prose, Form 4
+  is well-defined XML — `LongOrShort.Filings.Form4Parser` extracts
+  the transactions directly and persists them to
+  `LongOrShort.Filings.InsiderTransaction`. No LLM cost, no
+  extraction quality variance.
+
+  Cross-referencing those insider transactions against
+  dilution-relevant filings (the "insider sold within N days of
+  the latest dilution filing" signal) lives in
+  `LongOrShort.Filings.InsiderCrossReference`, which is what
+  feeds `:insider_selling_post_filing` in
+  `LongOrShort.Tickers.get_dilution_profile/1`.
   """
 
   use Ash.Domain, otp_app: :long_or_short
@@ -52,6 +71,14 @@ defmodule LongOrShort.Filings do
       define :list_filing_analyses_by_ticker, action: :by_ticker, args: [:ticker_id]
       define :list_recent_filing_analyses, action: :recent
       define :destroy_filing_analysis, action: :destroy
+    end
+
+    resource LongOrShort.Filings.InsiderTransaction do
+      define :create_insider_transaction, action: :create
+      define :get_insider_transaction, action: :read, get_by: [:id]
+      define :list_insider_transactions_by_ticker, action: :by_ticker, args: [:ticker_id]
+      define :list_insider_transactions_by_filing, action: :by_filing, args: [:filing_id]
+      define :destroy_insider_transaction, action: :destroy
     end
   end
 

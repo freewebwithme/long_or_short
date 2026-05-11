@@ -146,6 +146,23 @@ defmodule LongOrShort.Filings.Filing do
       public? true
       destination_attribute :filing_id
     end
+
+    # Insider transactions extracted from Form 4 (LON-118). N rows per
+    # Form 4 filing — same CEO can report multiple price-level
+    # transactions on the same day. `Form4Worker` finds unprocessed
+    # filings via `insider_transaction_count == 0` (aggregate below).
+    has_many :insider_transactions, LongOrShort.Filings.InsiderTransaction do
+      public? true
+      destination_attribute :filing_id
+    end
+  end
+
+  aggregates do
+    # Drives `Form4Worker`'s `WHERE insider_transaction_count == 0`
+    # find-unprocessed query. The worker wraps inserts in a DB
+    # transaction so this is a sound "all-or-nothing" idempotency
+    # check — a filing either has 0 transactions or its full set.
+    count :insider_transaction_count, :insider_transactions
   end
 
   actions do
