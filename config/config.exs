@@ -54,8 +54,8 @@ config :long_or_short, Oban,
        # release. Idempotent — dedup absorbs duplicates the regular
        # 60s timer would otherwise produce when it fires in the same
        # window.
-       {"0,30 7-10 * * 1-5", LongOrShort.News.MorningBoundaryPollWorker, [],
-        timezone: "America/New_York"}
+       {"0,30 7-10 * * 1-5", LongOrShort.News.MorningBoundaryPollWorker,
+        [timezone: "America/New_York"]}
      ]}
   ]
 
