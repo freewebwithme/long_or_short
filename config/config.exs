@@ -10,6 +10,13 @@ import Config
 config :ex_cldr, default_backend: LongOrShort.Cldr
 config :ash_oban, pro?: false
 
+# IANA timezone database (LON-129). Required for
+# `DateTime.shift_zone/2` to resolve names like "America/New_York"
+# — used by the Morning Brief feed's ET time-bucket classifier.
+# Without this, shift_zone falls back to UTC-only and ET conversion
+# silently no-ops.
+config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
+
 config :long_or_short, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,

@@ -364,6 +364,38 @@ defmodule LongOrShort.News.Article do
       prepare build(sort: [id: :desc])
     end
 
+    read :morning_brief do
+      description """
+      Articles published in a UTC time window, optionally scoped to a
+      list of ticker_ids. Backs the Morning Brief LiveView (LON-129)
+      — `:since`/`:until` come from the view-mode `view_window/2`
+      helper and `:ticker_ids` is supplied when the user toggles
+      "Watchlist only".
+
+      Sort is `published_at: :desc` with `id: :desc` as tiebreak,
+      unlike `:recent` (id-only). The trader-facing intent here is
+      "newest by source-publish time" — late ingests of older
+      articles should not pollute the top of the morning brief.
+      The `id` tiebreak keeps keyset cursors stable on
+      microsecond-equal `published_at` ties (the failure mode
+      that pushed `:recent` to id-only sort in LON-100).
+      """
+
+      argument :since, :utc_datetime_usec, allow_nil?: false
+      argument :until, :utc_datetime_usec, default: nil
+      argument :ticker_ids, {:array, :uuid}, default: nil
+
+      pagination keyset?: true, required?: false, default_limit: 50
+
+      filter expr(
+               published_at >= ^arg(:since) and
+                 (is_nil(^arg(:until)) or published_at < ^arg(:until)) and
+                 (is_nil(^arg(:ticker_ids)) or ticker_id in ^arg(:ticker_ids))
+             )
+
+      prepare build(sort: [published_at: :desc, id: :desc])
+    end
+
     read :recent_for_ticker do
       description """
       Articles for a ticker published since `:since`, newest first.

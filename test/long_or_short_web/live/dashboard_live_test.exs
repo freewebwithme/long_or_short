@@ -221,8 +221,12 @@ defmodule LongOrShortWeb.DashboardLiveTest do
 
       {:ok, _view, html} = live(conn, ~p"/")
 
+      # @news is shared between two widgets — `all_news_card` and the
+      # `morning_brief_preview_card` added in LON-129. Each article
+      # shows up once per widget, so the 10-article cap means ≤ 20
+      # matches in the HTML.
       visible = Regex.scan(~r/Title \d+/, html) |> length()
-      assert visible <= 10
+      assert visible <= 20
     end
 
     test "appends new article on broadcast", %{conn: conn} do

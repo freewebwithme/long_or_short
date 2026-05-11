@@ -76,6 +76,17 @@ defmodule LongOrShortWeb.Layouts do
           </li>
           <li>
             <.link
+              navigate={~p"/morning"}
+              class={[
+                "btn btn-ghost btn-sm",
+                @current_path == "/morning" && "btn-active"
+              ]}
+            >
+              Morning
+            </.link>
+          </li>
+          <li>
+            <.link
               navigate={~p"/analyze"}
               class={[
                 "btn btn-ghost btn-sm",
