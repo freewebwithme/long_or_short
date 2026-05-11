@@ -11,6 +11,13 @@ defmodule LongOrShort.Application do
       [
         LongOrShortWeb.Telemetry,
         LongOrShort.Repo,
+        # Boot hydration (LON-125) — read admin-tunable settings rows
+        # into Application env BEFORE any worker that consumes them
+        # starts. Sits between Repo (which it needs for DB read) and
+        # Oban (whose workers may read settings on their first run).
+        # See `LongOrShort.Settings.Loader` for the failure-mode
+        # contract.
+        LongOrShort.Settings.Loader,
         {DNSCluster, query: Application.get_env(:long_or_short, :dns_cluster_query) || :ignore},
         {Oban,
          AshOban.config(

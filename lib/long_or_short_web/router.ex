@@ -22,6 +22,14 @@ defmodule LongOrShortWeb.Router do
     plug :set_actor, :user
   end
 
+  # Admin role check (LON-125). Used by the `/admin` scope to gate
+  # ash_admin UI behind `role: :admin`. Anonymous + trader users
+  # get redirected to `/` with a flash message instead of seeing
+  # the admin UI.
+  pipeline :admin_required do
+    plug :require_admin
+  end
+
   scope "/", LongOrShortWeb do
     pipe_through :browser
 
@@ -101,13 +109,32 @@ defmodule LongOrShortWeb.Router do
     end
   end
 
-  if Application.compile_env(:long_or_short, :dev_routes) do
-    import AshAdmin.Router
+  # Admin UI (ash_admin) -- available in all envs, gated by
+  # `role: :admin` via the `:admin_required` pipeline above.
+  # LON-125: previously this lived inside the `dev_routes` block
+  # with `:browser` alone, which let anonymous / trader users hit
+  # `/admin`. Splitting it out + adding the role check fixes both.
+  import AshAdmin.Router
 
-    scope "/admin" do
-      pipe_through :browser
+  scope "/admin" do
+    pipe_through [:browser, :admin_required]
 
-      ash_admin "/"
+    ash_admin "/"
+  end
+
+  # Plug helper for `:admin_required`. Kept inside the router since
+  # it's the only consumer; extract to its own module if more
+  # routes need admin gating later.
+  defp require_admin(conn, _opts) do
+    case conn.assigns[:current_user] do
+      %{role: :admin} ->
+        conn
+
+      _ ->
+        conn
+        |> Phoenix.Controller.put_flash(:error, "Admin access required.")
+        |> Phoenix.Controller.redirect(to: "/")
+        |> Plug.Conn.halt()
     end
   end
 end
