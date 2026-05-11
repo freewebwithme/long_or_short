@@ -356,7 +356,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       {:ok, _view, html} = live(conn, ~p"/analyze")
 
       assert html =~ "Recent analyses"
-      assert html =~ "No analyses to show"
+      assert html =~ "No analyses yet"
       refute html =~ "Load more"
     end
 
@@ -388,7 +388,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       assert html =~ "BBB"
       assert html =~ "AAA headline"
       assert html =~ "BBB headline"
-      refute html =~ "No analyses to show"
+      refute html =~ "No analyses yet"
 
       # Sort assertion: BBB (newer) must appear before AAA in the markup.
       bbb_pos = :binary.match(html, "BBB headline") |> elem(0)
@@ -454,7 +454,7 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
       {:ok, _view, html} = live(conn, ~p"/analyze")
 
       refute html =~ "leaked headline"
-      assert html =~ "No analyses to show"
+      assert html =~ "No analyses yet"
     end
 
     test "load_more appends the next page when more results exist", %{conn: conn, user: user} do
