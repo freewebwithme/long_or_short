@@ -185,4 +185,48 @@ defmodule LongOrShort.FilingsFixtures do
         """
     end
   end
+
+  @doc """
+  Returns a map of valid attributes for creating an InsiderTransaction.
+  Caller must supply `:filing_id` and `:ticker_id` (or use
+  `build_insider_transaction/2` which extracts them from a Filing).
+  """
+  def valid_insider_transaction_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        filer_name: "Doe, John",
+        filer_role: :officer,
+        transaction_code: :open_market_sale,
+        share_count: 10_000,
+        price: Decimal.new("5.25"),
+        transaction_date: ~D[2026-04-15]
+      },
+      overrides
+    )
+  end
+
+  @doc """
+  Creates an InsiderTransaction row attached to the given Form 4
+  `filing`. Pulls `:filing_id` and `:ticker_id` from the filing so
+  the caller does not have to repeat them.
+  """
+  def build_insider_transaction(filing, overrides \\ %{}) do
+    attrs =
+      overrides
+      |> valid_insider_transaction_attrs()
+      |> Map.put(:filing_id, filing.id)
+      |> Map.put(:ticker_id, filing.ticker_id)
+
+    case Filings.create_insider_transaction(attrs, authorize?: false) do
+      {:ok, tx} ->
+        tx
+
+      {:error, error} ->
+        raise """
+        Failed to create insider_transaction fixture.
+        attrs: #{inspect(attrs)}
+        error: #{inspect(error)}
+        """
+    end
+  end
 end

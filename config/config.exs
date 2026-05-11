@@ -34,7 +34,13 @@ config :long_or_short, Oban,
        # that the body fetcher landed and runs the LLM extraction +
        # severity scoring. Watchlist-scoped: cost is bounded by the
        # number of tickers traders have explicitly opted into.
-       {"*/15 * * * *", LongOrShort.Filings.Workers.FilingAnalysisWorker}
+       {"*/15 * * * *", LongOrShort.Filings.Workers.FilingAnalysisWorker},
+       # Hourly at :30 — parse Form 4 (insider transactions) into
+       # InsiderTransaction rows (LON-118). Parallel path to the
+       # LLM extraction pipeline: Form 4 is structured XML, parsed
+       # directly. Cadence is intentionally slower than the LLM
+       # pipeline — Form 4 signal value is day-bound, not minute-bound.
+       {"30 * * * *", LongOrShort.Filings.Workers.Form4Worker}
      ]}
   ]
 
@@ -202,6 +208,14 @@ config :long_or_short,
 # intentionally *not* window-bound — an ATM registered 12 months
 # ago can still hang active capacity over the float today.
 config :long_or_short, :dilution_profile_window_days, 180
+
+# Window (days) for `LongOrShort.Filings.InsiderCrossReference`
+# (LON-118, Stage 9). Insider open-market sales within this many
+# days *after* the latest dilution-relevant filing trigger
+# `:insider_selling_post_filing = true` on the dilution profile.
+# 30d is the Phase 1 default; LON-121 calibration may tune it
+# based on real outcome tracking.
+config :long_or_short, :insider_post_filing_window_days, 30
 
 # AI provider — defaults to Claude in dev/prod, overridden in test
 config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude

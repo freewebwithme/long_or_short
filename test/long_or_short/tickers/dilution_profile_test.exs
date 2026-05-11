@@ -384,4 +384,73 @@ defmodule LongOrShort.Tickers.DilutionProfileTest do
       assert profile.last_filing_at == latest_filed_at
     end
   end
+
+  describe "get_dilution_profile/2 — insider_selling_post_filing (LON-118)" do
+    test "true when an open-market sale falls within 30 days of the latest dilution filing" do
+      ticker = build_ticker()
+
+      build_filing_for_ticker(ticker, %{
+        filing_type: :s3,
+        filed_at: ~U[2026-04-10 12:00:00.000000Z]
+      })
+
+      form4 =
+        build_filing_for_ticker(ticker, %{
+          filing_type: :form4,
+          filed_at: ~U[2026-04-15 12:00:00.000000Z]
+        })
+
+      build_insider_transaction(form4, %{
+        transaction_code: :open_market_sale,
+        transaction_date: ~D[2026-04-15]
+      })
+
+      profile = Tickers.get_dilution_profile(ticker.id, as_of: @as_of)
+      assert profile.insider_selling_post_filing == true
+    end
+
+    test "false when the only insider activity is an exercise (M), not an open-market sale" do
+      ticker = build_ticker()
+
+      build_filing_for_ticker(ticker, %{
+        filing_type: :s3,
+        filed_at: ~U[2026-04-10 00:00:00.000000Z]
+      })
+
+      form4 =
+        build_filing_for_ticker(ticker, %{
+          filing_type: :form4,
+          filed_at: ~U[2026-04-15 00:00:00.000000Z]
+        })
+
+      build_insider_transaction(form4, %{
+        transaction_code: :exercise,
+        transaction_date: ~D[2026-04-15]
+      })
+
+      profile = Tickers.get_dilution_profile(ticker.id, as_of: @as_of)
+      assert profile.insider_selling_post_filing == false
+    end
+
+    test "false when no preceding dilution filing exists (Form 4 alone doesn't anchor)" do
+      ticker = build_ticker()
+
+      # Only Form 4 + sale, no other dilution filings — flag should
+      # be false because the "post-dilution" framing requires a
+      # preceding dilution event.
+      form4 =
+        build_filing_for_ticker(ticker, %{
+          filing_type: :form4,
+          filed_at: ~U[2026-04-15 00:00:00.000000Z]
+        })
+
+      build_insider_transaction(form4, %{
+        transaction_code: :open_market_sale,
+        transaction_date: ~D[2026-04-15]
+      })
+
+      profile = Tickers.get_dilution_profile(ticker.id, as_of: @as_of)
+      assert profile.insider_selling_post_filing == false
+    end
+  end
 end

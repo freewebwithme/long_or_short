@@ -69,9 +69,12 @@ defmodule LongOrShort.Tickers.DilutionProfile do
     * **`:large_overhang` flag not computed.** Needs
       `ticker.float_shares`. Stage 5/6 can derive it from raw
       `remaining_shares` + `float_shares` directly.
-    * **`:insider_selling_post_filing` is hard-coded `false`.**
-      Stage 9 (LON-118) populates it via Form 4 cross-reference. The
-      key is in the output shape now so Stage 5 can rely on it.
+    * **`:insider_selling_post_filing` populated by LON-118**, the
+      Stage 9 Form 4 cross-reference. Computed live via
+      `LongOrShort.Filings.InsiderCrossReference.insider_selling_post_dilution?/2`
+      — `true` when an insider's open-market sale falls within
+      `:insider_post_filing_window_days` (default 30) of the
+      latest dilution-relevant filing.
 
   ## Evolution roadmap
 
@@ -118,10 +121,10 @@ defmodule LongOrShort.Tickers.DilutionProfile do
       second (Stage 5 NewsAnalyzer calling this on every article
       analysis is the most likely volume driver).
 
-    * **`:insider_selling_post_filing` populated by Stage 9
-      (LON-118)** via Form 4 cross-reference. The key is already in
-      the output contract so Stage 5 can wire it in advance — no
-      breaking change when Stage 9 lands.
+    * **`:insider_selling_post_filing` already wired** via LON-118's
+      `InsiderCrossReference`. Future calibration may refine which
+      filing types count as "dilution-relevant" (currently
+      everything except `:form4`) and the 30d window.
 
     * **Per-ticker window override** when traders need a different
       cadence per sector (e.g. biotech ~360d window catches more
@@ -149,6 +152,7 @@ defmodule LongOrShort.Tickers.DilutionProfile do
 
   alias LongOrShort.Filings.AtmLifecycle
   alias LongOrShort.Filings.FilingAnalysis
+  alias LongOrShort.Filings.InsiderCrossReference
 
   # Lowest → highest. Used to rank `dilution_severity` for the
   # `overall_severity` computation. `:none` is the floor — rows
@@ -217,7 +221,8 @@ defmodule LongOrShort.Tickers.DilutionProfile do
       pending_s1: pending_s1(in_window),
       warrant_overhang: warrant_overhang(in_window),
       recent_reverse_split: recent_reverse_split(in_window),
-      insider_selling_post_filing: false,
+      insider_selling_post_filing:
+        InsiderCrossReference.insider_selling_post_dilution?(ticker_id, as_of: as_of),
       flags: aggregate_flags(in_window),
       last_filing_at: last_filing_at(in_window),
       data_completeness: data_completeness(in_window, active_atm)
