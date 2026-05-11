@@ -217,7 +217,9 @@ config :long_or_short, :dilution_profile_window_days, 180
 # based on real outcome tracking.
 config :long_or_short, :insider_post_filing_window_days, 30
 
-# AI provider — defaults to Claude in dev/prod, overridden in test
+# AI provider — defaults to Claude in dev/prod, overridden in test.
+# `runtime.exs` reads the `AI_PROVIDER` env var and may swap this for
+# a different provider module (e.g. Qwen) at boot.
 config :long_or_short, :ai_provider, LongOrShort.AI.Providers.Claude
 
 config :long_or_short, LongOrShort.AI.Providers.Claude,
@@ -225,6 +227,23 @@ config :long_or_short, LongOrShort.AI.Providers.Claude,
   max_tokens: 4096,
   base_url: "https://api.anthropic.com",
   anthropic_version: "2023-06-01"
+
+# Qwen / DashScope provider defaults (LON-104). Region-specific base
+# URLs — `runtime.exs` selects which one is active via `QWEN_REGION`.
+# Singapore is the free-tier dev/test region; US Virginia is
+# production pay-as-you-go.
+config :long_or_short, LongOrShort.AI.Providers.Qwen,
+  model: "qwen3-max",
+  max_tokens: 4096,
+  base_urls: %{
+    singapore: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    us: "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+  }
+
+# Default Qwen region — `runtime.exs` overrides from `QWEN_REGION`.
+# Setting it here ensures dev/test (which skip runtime.exs in some
+# flows) still has a value if the provider is exercised.
+config :long_or_short, :qwen_region, :singapore
 
 # Filing-extraction model map (LON-113).
 #
@@ -247,6 +266,15 @@ config :long_or_short, :filing_extraction_models, %{
   LongOrShort.AI.Providers.Claude => %{
     cheap: "claude-haiku-4-5-20251001",
     complex: "claude-sonnet-4-6"
+  },
+  # LON-104: placeholder entry so the Router doesn't `Map.fetch!`-raise
+  # when `:ai_provider` is swapped to Qwen at the AI facade. Both
+  # tiers point at `qwen3-max` for now — separating cheap/complex
+  # against a smaller Qwen model is a follow-up evaluation; filing
+  # extraction via Qwen has not been quality-checked yet.
+  LongOrShort.AI.Providers.Qwen => %{
+    cheap: "qwen3-max",
+    complex: "qwen3-max"
   }
 }
 
