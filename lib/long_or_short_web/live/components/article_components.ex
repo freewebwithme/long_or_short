@@ -91,6 +91,18 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
         :if={@analysis && @expanded?}
         analysis={@analysis}
       />
+
+      <div :if={@article.url} class="mt-2 flex justify-end">
+        <a
+          href={@article.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onclick="return confirm('외부 링크로 이동합니다. 계속하시겠습니까?')"
+          class="text-xs opacity-60 hover:opacity-100 inline-flex items-center gap-1"
+        >
+          Detail <span aria-hidden="true">↗</span>
+        </a>
+      </div>
     </div>
     """
   end

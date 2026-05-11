@@ -52,6 +52,7 @@ defmodule LongOrShortWeb.DashboardLive do
     ticker_ids = watchlist_ticker_id_set(watchlist)
     news = load_news(actor)
     watchlist_news = load_watchlist_news(ticker_ids, actor)
+    morning_brief_preview = load_morning_brief_preview(actor)
 
     if connected?(socket) do
       subscribe_for_articles(news ++ watchlist_news)
@@ -63,6 +64,7 @@ defmodule LongOrShortWeb.DashboardLive do
       |> assign(:watchlist_ticker_ids, ticker_ids)
       |> assign(:news, news)
       |> assign(:watchlist_news, watchlist_news)
+      |> assign(:morning_brief_preview, morning_brief_preview)
       |> assign(:analyzing_ids, MapSet.new())
       |> assign(:expanded_ids, MapSet.new())
       |> assign(:active_news, [])
@@ -194,10 +196,16 @@ defmodule LongOrShortWeb.DashboardLive do
             socket.assigns.watchlist_news
           end
 
+        morning_brief_preview =
+          [article | socket.assigns.morning_brief_preview]
+          |> sort_by_published()
+          |> Enum.take(@news_limit)
+
         {:noreply,
          socket
          |> assign(:news, news)
-         |> assign(:watchlist_news, watchlist_news)}
+         |> assign(:watchlist_news, watchlist_news)
+         |> assign(:morning_brief_preview, morning_brief_preview)}
 
       {:error, _} ->
         {:noreply, socket}
@@ -249,7 +257,7 @@ defmodule LongOrShortWeb.DashboardLive do
         </div>
 
     <!-- Morning Brief preview (full width) -->
-        <.morning_brief_preview_card news={@news} />
+        <.morning_brief_preview_card news={@morning_brief_preview} />
 
     <!-- Middle: search + ticker info/news -->
         <div class="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4">
@@ -413,15 +421,22 @@ defmodule LongOrShortWeb.DashboardLive do
           <span class={bucket_badge_class(article.published_at)}>
             {bucket_label(article.published_at)}
           </span>
-          <.link
-            navigate={~p"/analyze/#{article.id}"}
-            class="flex-1 min-w-0 truncate hover:underline"
-          >
+          <span class="flex-1 min-w-0 truncate">
             {article.title}
-          </.link>
+          </span>
           <span :if={article.ticker} class="badge badge-outline badge-sm shrink-0">
             {article.ticker.symbol}
           </span>
+          <a
+            :if={article.url}
+            href={article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onclick="return confirm('외부 링크로 이동합니다. 계속하시겠습니까?')"
+            class="text-xs opacity-60 hover:opacity-100 shrink-0"
+          >
+            Detail ↗
+          </a>
           <span class="text-xs opacity-60 whitespace-nowrap shrink-0 w-16 text-right">
             {brief_time_ago(article.published_at)}
           </span>
@@ -577,6 +592,22 @@ defmodule LongOrShortWeb.DashboardLive do
         {:ok, articles} -> sort_by_published(articles)
         _ -> []
       end
+    end
+  end
+
+  # Morning Brief preview uses the `:morning_brief` action (sort by
+  # `published_at: :desc` natively, with `id: :desc` tiebreak), unlike
+  # `:recent` which sorts by id for keyset cursor stability.
+  defp load_morning_brief_preview(actor) do
+    since = DateTime.add(DateTime.utc_now(), -24 * 3600, :second)
+
+    case News.list_morning_brief(%{since: since},
+           load: [:ticker],
+           actor: actor,
+           page: [limit: @news_limit]
+         ) do
+      {:ok, %Ash.Page.Keyset{results: articles}} -> articles
+      _ -> []
     end
   end
 
