@@ -48,14 +48,17 @@ config :long_or_short, Oban,
        # directly. Cadence is intentionally slower than the LLM
        # pipeline — Form 4 signal value is day-bound, not minute-bound.
        {"30 * * * *", LongOrShort.Filings.Workers.Form4Worker},
-       # Morning catalyst boundaries (ET, Mon–Fri) — force every
-       # enabled news feeder to poll at :00 / :30 between 07:00 and
-       # 10:30 so we never miss a top-of-hour earnings / FDA / jobs
-       # release. Idempotent — dedup absorbs duplicates the regular
-       # 60s timer would otherwise produce when it fires in the same
-       # window.
-       {"0,30 7-10 * * 1-5", LongOrShort.News.MorningBoundaryPollWorker,
-        [timezone: "America/New_York"]}
+       # Morning catalyst boundaries — force every enabled news
+       # feeder to poll at the top-of-hour / bottom-of-hour windows
+       # so we never miss an earnings / FDA / jobs release. The
+       # cron fires UTC every :00 / :30; the worker itself filters
+       # to ET 07:00–10:30 Mon–Fri (Oban 2.21's 3-tuple cron entry
+       # accepts job-options only — no per-entry `timezone` — and
+       # promoting the plugin-level `timezone` would shift the
+       # other UTC-anchored daily jobs above). Idempotent — dedup
+       # absorbs duplicates the regular 60s timer would otherwise
+       # produce in the same window.
+       {"0,30 * * * *", LongOrShort.News.MorningBoundaryPollWorker}
      ]}
   ]
 
