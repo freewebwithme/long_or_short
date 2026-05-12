@@ -52,6 +52,7 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.Filings
   alias LongOrShort.Filings.{BodyFetcher, Filing}
+  alias LongOrShort.Workers.BatchHelper
 
   @batch_size 100
   @per_filing_pause_ms 150
@@ -72,26 +73,12 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
   defp run_batch(filings, total) do
     Logger.info("FilingBodyFetcher: processing #{total} pending filings")
 
-    {ok_count, err_count} =
-      filings
-      |> Enum.with_index()
-      |> Enum.reduce({0, 0}, fn {filing, idx}, {ok, err} ->
-        if idx > 0, do: Process.sleep(@per_filing_pause_ms)
+    counts =
+      BatchHelper.process_batch(filings, &process_one/1, per_item_pause_ms: @per_filing_pause_ms)
 
-        case process_one(filing) do
-          :ok -> {ok + 1, err}
-          {:error, _} -> {ok, err + 1}
-        end
-      end)
+    Logger.info("FilingBodyFetcher: complete — #{counts.ok} ok, #{counts.error} failed")
 
-    Logger.info("FilingBodyFetcher: complete — #{ok_count} ok, #{err_count} failed")
-
-    :telemetry.execute(
-      [:long_or_short, :filing_body_fetcher, :complete],
-      %{ok: ok_count, error: err_count, total: total},
-      %{}
-    )
-
+    BatchHelper.emit_complete_telemetry(:filing_body_fetcher, counts, total)
     :ok
   end
 

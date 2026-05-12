@@ -74,6 +74,7 @@ defmodule LongOrShort.Filings.Workers.Form4Worker do
   alias LongOrShort.Filings
   alias LongOrShort.Filings.{Filing, Form4Parser}
   alias LongOrShort.Repo
+  alias LongOrShort.Workers.BatchHelper
 
   @batch_size 50
   @per_filing_pause_ms 150
@@ -95,26 +96,12 @@ defmodule LongOrShort.Filings.Workers.Form4Worker do
   defp run_batch(filings, total) do
     Logger.info("Form4Worker: processing #{total} pending Form 4 filings")
 
-    {ok_count, err_count} =
-      filings
-      |> Enum.with_index()
-      |> Enum.reduce({0, 0}, fn {filing, idx}, {ok, err} ->
-        if idx > 0, do: Process.sleep(@per_filing_pause_ms)
+    counts =
+      BatchHelper.process_batch(filings, &process_one/1, per_item_pause_ms: @per_filing_pause_ms)
 
-        case process_one(filing) do
-          :ok -> {ok + 1, err}
-          {:error, _} -> {ok, err + 1}
-        end
-      end)
+    Logger.info("Form4Worker: complete — #{counts.ok} ok, #{counts.error} failed")
 
-    Logger.info("Form4Worker: complete — #{ok_count} ok, #{err_count} failed")
-
-    :telemetry.execute(
-      [:long_or_short, :form4_worker, :complete],
-      %{ok: ok_count, error: err_count, total: total},
-      %{}
-    )
-
+    BatchHelper.emit_complete_telemetry(:form4_worker, counts, total)
     :ok
   end
 
