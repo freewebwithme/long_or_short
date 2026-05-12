@@ -295,6 +295,11 @@ sudo tailscale up   # open the printed URL in a browser to log in
 tailscale ip -4     # e.g. 100.x.y.z
 ```
 
+Phoenix dev defaults to `127.0.0.1` (loopback only), so Tailscale peers
+can't reach it. `config/dev.exs` is already set to `ip: {0, 0, 0, 0}`
+for this laptop — restart `mix phx.server` after pulling so the change
+takes effect. Tailscale ACLs keep the port off the public internet.
+
 ### Windows trading laptop
 
 Download <https://tailscale.com/download/windows>, sign in with the same
