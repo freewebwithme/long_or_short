@@ -241,4 +241,53 @@ defmodule LongOrShort.Tickers.WatchlistItemTest do
       assert {:ok, []} = Tickers.list_watchlist(user.id, actor: nil)
     end
   end
+
+  # LON-138 regression tests — ownership scoping.
+  describe "policies — ownership scoping (LON-138)" do
+    test "trader A cannot destroy trader B's watchlist item" do
+      trader_a = build_trader_user()
+      trader_b = build_trader_user()
+      item = build_watchlist_item(%{user_id: trader_b.id})
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               Tickers.remove_from_watchlist(item, actor: trader_a)
+
+      # The item still exists.
+      assert {:ok, [_]} = Tickers.list_watchlist(trader_b.id, actor: trader_b)
+    end
+
+    test "admin can destroy any trader's watchlist item" do
+      admin = build_admin_user()
+      trader = build_trader_user()
+      item = build_watchlist_item(%{user_id: trader.id})
+
+      assert :ok = Tickers.remove_from_watchlist(item, actor: admin)
+      assert {:ok, []} = Tickers.list_watchlist(trader.id, authorize?: false)
+    end
+
+    test "trader cannot add to another user's watchlist (validation error)" do
+      trader_a = build_trader_user()
+      trader_b = build_trader_user()
+      ticker = build_ticker()
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Tickers.add_to_watchlist(
+                 %{user_id: trader_b.id, ticker_id: ticker.id},
+                 actor: trader_a
+               )
+
+      # No row was created for trader_b.
+      assert {:ok, []} = Tickers.list_watchlist(trader_b.id, authorize?: false)
+    end
+
+    test "trader A passing another user's id to list_watchlist sees empty list" do
+      trader_a = build_trader_user()
+      trader_b = build_trader_user()
+      build_watchlist_item(%{user_id: trader_b.id})
+
+      # Filter-style read policy: mismatched argument yields empty results,
+      # not Forbidden. Trader A learns nothing about Trader B's watchlist.
+      assert {:ok, []} = Tickers.list_watchlist(trader_b.id, actor: trader_a)
+    end
+  end
 end

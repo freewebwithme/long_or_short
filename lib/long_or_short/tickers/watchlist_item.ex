@@ -31,9 +31,12 @@ defmodule LongOrShort.Tickers.WatchlistItem do
 
   ## Policies
 
-  Mirror `TradingProfile` policy structure — SystemActor and admins
-  bypass all checks; traders can read, create, and destroy. LON-15 will
-  tighten the trader destroy policy to own-row-only once auth hardens.
+  SystemActor and admins bypass all checks. Traders can only act on
+  their own watchlist rows — verified per-action via the policy
+  expressions below (LON-138).
+
+  `:list_all` has no trader-facing policy clause; it falls through to
+  default-forbidden and is only reachable via system/admin bypass.
   """
 
   require Logger
@@ -100,6 +103,30 @@ defmodule LongOrShort.Tickers.WatchlistItem do
       # the existing row on conflict rather than silently discarding it.
       upsert_fields [:updated_at]
 
+      # Ownership scoping for create — Ash policy `authorize_if expr(...)`
+      # cannot reference changeset attributes on a create action (the
+      # row doesn't exist yet), so the trader-can-only-create-for-self
+      # invariant is enforced here as a validation. System/admin actors
+      # bypass. Nil actor is left to the policy `actor_present()` check.
+      validate fn changeset, %{actor: actor} ->
+        cond do
+          is_nil(actor) ->
+            :ok
+
+          Map.get(actor, :system?) == true ->
+            :ok
+
+          Map.get(actor, :role) == :admin ->
+            :ok
+
+          Ash.Changeset.get_attribute(changeset, :user_id) == actor.id ->
+            :ok
+
+          true ->
+            {:error, field: :user_id, message: "must match the authenticated user"}
+        end
+      end
+
       # Enqueue a dilution-analysis backfill for the ticker so the
       # /dilution UI is populated immediately rather than waiting for
       # the next watchlist cron sweep (LON-115). The worker is
@@ -148,18 +175,23 @@ defmodule LongOrShort.Tickers.WatchlistItem do
       authorize_if always()
     end
 
-    policy action_type(:read) do
+    # Trader can read their own watchlist. `:list_all` has no clause
+    # here and is forbidden unless the system/admin bypass above fires.
+    policy action(:list_for_user) do
+      authorize_if expr(^arg(:user_id) == ^actor(:id))
+    end
+
+    # Trader can add only to their own watchlist. The ownership check
+    # itself runs as an in-action validation (see :add) because Ash
+    # policies cannot reference changeset attributes on create. This
+    # policy gates anonymous callers.
+    policy action(:add) do
       authorize_if actor_present()
     end
 
-    policy action_type(:create) do
-      authorize_if actor_present()
-    end
-
-    # Phase 1: any authenticated actor can destroy any item.
-    # LON-15 will tighten to own-row-only.
+    # Trader can destroy only their own rows.
     policy action_type(:destroy) do
-      authorize_if actor_present()
+      authorize_if expr(user_id == ^actor(:id))
     end
   end
 end
