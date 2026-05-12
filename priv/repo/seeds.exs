@@ -48,7 +48,7 @@ cond do
 
     case existing do
       nil ->
-        {:ok, user} =
+        register_result =
           LongOrShort.Accounts.User
           |> Ash.Changeset.for_create(:register_with_password, %{
             email: admin_email,
@@ -57,14 +57,24 @@ cond do
           })
           |> Ash.create(authorize?: false)
 
-        {:ok, _promoted} =
-          user
-          |> Ash.Changeset.for_update(:update, %{}, authorize?: false)
-          |> Ash.Changeset.force_change_attribute(:role, :admin)
-          |> Ash.Changeset.force_change_attribute(:confirmed_at, DateTime.utc_now())
-          |> Ash.update(authorize?: false)
+        case register_result do
+          {:ok, user} ->
+            {:ok, _promoted} =
+              user
+              |> Ash.Changeset.for_update(:update, %{}, authorize?: false)
+              |> Ash.Changeset.force_change_attribute(:role, :admin)
+              |> Ash.Changeset.force_change_attribute(:confirmed_at, DateTime.utc_now())
+              |> Ash.update(authorize?: false)
 
-        IO.puts("[seeds] Admin user bootstrapped: #{admin_email}")
+            IO.puts("[seeds] Admin user bootstrapped: #{admin_email}")
+
+          {:error, error} ->
+            IO.puts(
+              "[seeds] Admin bootstrap failed on field(s): " <>
+                LongOrShort.Seeds.invalid_fields(error) <>
+                ". Check ADMIN_EMAIL/ADMIN_PASSWORD (password must be >= 8 chars). Skipping."
+            )
+        end
 
       _user ->
         IO.puts("[seeds] Admin user already exists: #{admin_email} — skipping.")
@@ -110,7 +120,7 @@ cond do
 
     case existing_trader do
       nil ->
-        {:ok, user} =
+        register_result =
           LongOrShort.Accounts.User
           |> Ash.Changeset.for_create(:register_with_password, %{
             email: trader_email,
@@ -119,16 +129,26 @@ cond do
           })
           |> Ash.create(authorize?: false)
 
-        # Role defaults to :trader from the resource — we only need
-        # to flip confirmed_at to bypass the Local-adapter mailer
-        # gap.
-        {:ok, _confirmed} =
-          user
-          |> Ash.Changeset.for_update(:update, %{}, authorize?: false)
-          |> Ash.Changeset.force_change_attribute(:confirmed_at, DateTime.utc_now())
-          |> Ash.update(authorize?: false)
+        case register_result do
+          {:ok, user} ->
+            # Role defaults to :trader from the resource — we only need
+            # to flip confirmed_at to bypass the Local-adapter mailer
+            # gap.
+            {:ok, _confirmed} =
+              user
+              |> Ash.Changeset.for_update(:update, %{}, authorize?: false)
+              |> Ash.Changeset.force_change_attribute(:confirmed_at, DateTime.utc_now())
+              |> Ash.update(authorize?: false)
 
-        IO.puts("[seeds] Trader user bootstrapped: #{trader_email}")
+            IO.puts("[seeds] Trader user bootstrapped: #{trader_email}")
+
+          {:error, error} ->
+            IO.puts(
+              "[seeds] Trader bootstrap failed on field(s): " <>
+                LongOrShort.Seeds.invalid_fields(error) <>
+                ". Check TRADER_PASSWORD (or ADMIN_PASSWORD fallback — must be >= 8 chars). Skipping."
+            )
+        end
 
       _user ->
         IO.puts("[seeds] Trader user already exists: #{trader_email} — skipping.")
