@@ -148,7 +148,16 @@ defmodule LongOrShortWeb.DashboardLive do
 
     with {:ok, ticker} <- Tickers.get_ticker_by_symbol(symbol, actor: actor),
          {:ok, articles} <-
-           News.list_articles_by_ticker_symbol(symbol, load: [:ticker], actor: actor) do
+           News.list_articles_by_ticker_symbol(symbol,
+             load: [:ticker, :news_analysis],
+             actor: actor
+           ) do
+      # Subscribe so `{:news_analysis_ready, _}` reaches us for articles
+      # that surfaced only via search (not already in `:news` /
+      # `:watchlist_news`). Idempotent — `subscribe_for_article/1` re-
+      # subscribing to the same topic is a no-op.
+      if connected?(socket), do: subscribe_for_articles(articles)
+
       {:noreply,
        socket
        |> assign(:active_ticker, ticker)
@@ -267,6 +276,9 @@ defmodule LongOrShortWeb.DashboardLive do
             <.ticker_news_card
               active_ticker={@active_ticker}
               news={@active_news}
+              analyzing_ids={@analyzing_ids}
+              expanded_ids={@expanded_ids}
+              analyze_disabled?={is_nil(@current_user.trading_profile)}
             />
           </div>
         </div>
@@ -376,6 +388,9 @@ defmodule LongOrShortWeb.DashboardLive do
 
   attr :active_ticker, :any, required: true
   attr :news, :list, required: true
+  attr :analyzing_ids, :any, required: true
+  attr :expanded_ids, :any, required: true
+  attr :analyze_disabled?, :boolean, required: true
 
   defp ticker_news_card(assigns) do
     ~H"""
@@ -392,6 +407,10 @@ defmodule LongOrShortWeb.DashboardLive do
         <ArticleComponents.article_card
           :for={article <- @news}
           article={article}
+          analysis={extract_analysis(article)}
+          analyzing?={MapSet.member?(@analyzing_ids, article.id)}
+          analyze_disabled?={@analyze_disabled?}
+          expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="active"
         />
       </div>
@@ -641,6 +660,10 @@ defmodule LongOrShortWeb.DashboardLive do
     |> assign(
       :watchlist_news,
       replace_in_list(socket.assigns.watchlist_news, id, article)
+    )
+    |> assign(
+      :active_news,
+      replace_in_list(socket.assigns.active_news, id, article)
     )
   end
 

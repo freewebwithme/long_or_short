@@ -197,6 +197,103 @@ defmodule LongOrShortWeb.DashboardLiveTest do
     end
   end
 
+  describe "ticker-search Analyze flow" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "Analyze click in #dash-news enters analyzing state with spinner",
+         %{conn: conn} do
+      test_pid = self()
+
+      MockProvider.stub(fn _msgs, _tools, _opts ->
+        send(test_pid, :ai_called)
+
+        receive do
+          :proceed -> {:ok, %{tool_calls: [], text: nil, usage: %{}}}
+        after
+          5_000 -> {:error, :test_timeout}
+        end
+      end)
+
+      ticker = build_ticker(%{symbol: "SRCH"})
+      article = build_article_for_ticker(ticker, %{title: "Search target news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> form("#dash-search form", %{query: "SRCH"}) |> render_change()
+
+      view
+      |> element("button[phx-click='select_ticker'][phx-value-symbol='SRCH']")
+      |> render_click()
+
+      view
+      |> element("#dash-news button[phx-click='analyze'][phx-value-id='#{article.id}']")
+      |> render_click()
+
+      # Wait for the spawned Task to actually call the AI — proves the
+      # handler ran and the analysis is in flight
+      assert_receive :ai_called, 1_000
+
+      # Scope to #dash-news: before LON-140, the spinner only appeared
+      # in #dash-all-news (which shares `analyzing_ids`); the ticker-
+      # search card never reflected the analyzing state.
+      assert has_element?(view, "#dash-news .loading-spinner")
+    end
+
+    test "broadcasting :news_analysis_ready updates the ticker-search card",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "BRDC"})
+      article = build_article_for_ticker(ticker, %{title: "Broadcast target news"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> form("#dash-search form", %{query: "BRDC"}) |> render_change()
+
+      view
+      |> element("button[phx-click='select_ticker'][phx-value-symbol='BRDC']")
+      |> render_click()
+
+      analysis =
+        build_news_analysis(%{article_id: article.id, user_id: user.id, verdict: :skip})
+
+      AnalysisEvents.broadcast_analysis_ready(analysis)
+
+      # Drain handle_info
+      _ = :sys.get_state(view.pid)
+
+      # Pre-LON-140 `replace_article_in_lists/2` only touched `:news` /
+      # `:watchlist_news`, so #dash-news stayed stale forever.
+      dash_news_html = view |> element("#dash-news") |> render()
+      assert dash_news_html =~ "SKIP"
+    end
+
+    test "pre-existing analysis renders in #dash-news on select_ticker",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "PRE"})
+      article = build_article_for_ticker(ticker, %{title: "Pre-analyzed news"})
+
+      build_news_analysis(%{article_id: article.id, user_id: user.id, verdict: :skip})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> form("#dash-search form", %{query: "PRE"}) |> render_change()
+
+      view
+      |> element("button[phx-click='select_ticker'][phx-value-symbol='PRE']")
+      |> render_click()
+
+      # `:by_ticker_symbol` now loads `:news_analysis` — the search
+      # card must show the verdict immediately, not the Analyze button.
+      dash_news_html = view |> element("#dash-news") |> render()
+      assert dash_news_html =~ "SKIP"
+      refute dash_news_html =~ ~s|phx-click="analyze"|
+    end
+  end
+
   describe "all news widget" do
     setup %{conn: conn} do
       user = build_trader_user()
