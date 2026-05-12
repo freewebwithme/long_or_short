@@ -79,48 +79,30 @@ defmodule LongOrShort.AI.Providers.Qwen do
   """
   @behaviour LongOrShort.AI.Provider
 
+  alias LongOrShort.AI.ProviderHelper
+
   @path "chat/completions"
-  @receive_timeout :timer.seconds(60)
 
   @impl true
   def call(messages, tools, opts \\ []) do
     with {:ok, key} <- api_key(),
          body = build_body(messages, tools, opts),
-         {:ok, response} <- post(key, body) do
-      handle_response(response)
+         {:ok, response} <- ProviderHelper.post(client(key), @path, body),
+         {:ok, response_body} <- ProviderHelper.dispatch(response) do
+      normalize(response_body)
     end
   end
 
   # ─── HTTP ──────────────────────────────────────────────────────────
 
-  defp post(api_key, body) do
-    case Req.post(client(api_key), url: @path, json: body) do
-      {:ok, %Req.Response{} = response} ->
-        {:ok, response}
-
-      {:error, %Req.TransportError{reason: reason}} ->
-        {:error, {:network_error, reason}}
-
-      {:error, reason} ->
-        {:error, {:network_error, reason}}
-    end
-  end
-
   defp client(api_key) do
     config = config()
 
-    base =
-      Req.new(
-        base_url: region_base_url(config),
-        headers: headers(api_key),
-        receive_timeout: @receive_timeout,
-        retry: false
-      )
-
-    case Keyword.get(config, :req_plug) do
-      nil -> base
-      plug -> Req.merge(base, plug: plug)
-    end
+    ProviderHelper.new_client(
+      base_url: region_base_url(config),
+      headers: headers(api_key),
+      req_plug: Keyword.get(config, :req_plug)
+    )
   end
 
   defp region_base_url(config) do
@@ -193,25 +175,9 @@ defmodule LongOrShort.AI.Providers.Qwen do
 
   # ─── Response handling ────────────────────────────────────────────
 
-  defp handle_response(%Req.Response{status: 200, body: body}) when is_map(body) do
-    normalize(body)
-  end
-
-  defp handle_response(%Req.Response{status: 429, headers: headers, body: _}) do
-    {:error, {:rate_limited, retry_after(headers)}}
-  end
-
-  defp handle_response(%Req.Response{status: status, body: body}) when status in 400..599 do
-    {:error, {:http_error, status, body}}
-  end
-
-  defp handle_response(%Req.Response{body: body}) do
-    {:error, {:invalid_response, body}}
-  end
-
   defp normalize(%{"choices" => [choice | _]} = body) do
     message = Map.get(choice, "message") || %{}
-    usage = extract_usage(body)
+    usage = ProviderHelper.usage_map(body, input_key: "prompt_tokens", output_key: "completion_tokens")
 
     :telemetry.execute(
       [:long_or_short, :ai, :qwen, :call],
@@ -260,30 +226,6 @@ defmodule LongOrShort.AI.Providers.Qwen do
     do: content
 
   defp extract_text(_), do: nil
-
-  # Returns the same 4-key shape Claude emits so the telemetry handler
-  # and downstream usage trackers (LON-35 epic) don't need a
-  # provider-specific branch. Qwen's compat endpoint does not emit
-  # cache_creation/read fields — those default to 0.
-  defp extract_usage(body) do
-    usage = Map.get(body, "usage") || %{}
-
-    %{
-      input_tokens: Map.get(usage, "prompt_tokens", 0),
-      output_tokens: Map.get(usage, "completion_tokens", 0),
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0
-    }
-  end
-
-  defp retry_after(%{} = headers) do
-    case Map.get(headers, "retry-after") do
-      [value | _] -> value
-      _ -> nil
-    end
-  end
-
-  defp retry_after(_), do: nil
 
   # ─── Config helpers ────────────────────────────────────────────────
 
