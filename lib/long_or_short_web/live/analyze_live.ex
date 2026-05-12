@@ -83,24 +83,12 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
   @impl true
   def handle_event("ticker_search", %{"query" => query}, socket) do
-    query = String.trim(query)
-    actor = socket.assigns.current_user
-
-    results =
-      case query do
-        "" ->
-          []
-
-        q ->
-          case Tickers.search_tickers(q, actor: actor) do
-            {:ok, list} -> list
-            _ -> []
-          end
-      end
+    {trimmed, results} =
+      LongOrShortWeb.Live.TickerSearchHelper.search(query, socket.assigns.current_user)
 
     {:noreply,
      socket
-     |> assign(:ticker_query, query)
+     |> assign(:ticker_query, trimmed)
      |> assign(:ticker_results, results)}
   end
 

@@ -46,24 +46,12 @@ defmodule LongOrShortWeb.WatchlistLive do
 
   @impl true
   def handle_event("search_ticker", %{"query" => query}, socket) do
-    query = String.trim(query)
-    actor = socket.assigns.current_user
-
-    results =
-      case query do
-        "" ->
-          []
-
-        q ->
-          case Tickers.search_tickers(q, actor: actor) do
-            {:ok, list} -> list
-            _ -> []
-          end
-      end
+    {trimmed, results} =
+      LongOrShortWeb.Live.TickerSearchHelper.search(query, socket.assigns.current_user)
 
     {:noreply,
      socket
-     |> assign(:search_query, query)
+     |> assign(:search_query, trimmed)
      |> assign(:search_results, results)}
   end
 
