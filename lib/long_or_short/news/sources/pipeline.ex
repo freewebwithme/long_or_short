@@ -64,10 +64,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.News
   alias LongOrShort.News.Dedup
-  alias LongOrShort.News.Sources.Backoff
-  alias LongOrShort.Sources
-
-  @poll_message :poll
+  alias LongOrShort.Sources.PipelineHelpers
 
   @doc """
   Initial state + first poll. Call from the feeder's `init/1`.
@@ -83,7 +80,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
     initial_custom = Keyword.get(opts, :state, %{})
     state = Map.merge(initial_custom, %{retry_count: 0})
 
-    schedule_first_poll(module)
+    PipelineHelpers.schedule_first_poll(module)
     {:ok, state}
   end
 
@@ -100,7 +97,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
         handle_success(module, raw_items, new_state)
 
       {:error, reason, new_state} ->
-        handle_error(module, reason, new_state)
+        PipelineHelpers.handle_error(module, reason, new_state)
     end
   end
 
@@ -114,16 +111,16 @@ defmodule LongOrShort.News.Sources.Pipeline do
     end)
 
     # Persist last_success_at so next restart fetches only new articles
-    update_source_state(module, :success)
+    PipelineHelpers.update_source_state(module, :success)
 
     next_state = Map.put(state, :retry_count, 0)
-    schedule_next(module.poll_interval_ms())
+    PipelineHelpers.schedule_next(module.poll_interval_ms())
     {:noreply, next_state}
   end
 
   defp process_batch(module, raw_items) do
     Enum.reduce(raw_items, {0, 0, 0}, fn raw, {ing, dedup, err} ->
-      case parse_one(module, raw) do
+      case PipelineHelpers.parse_one(module, raw) do
         {:ok, attrs_list} ->
           Enum.reduce(attrs_list, {ing, dedup, err}, &handle_attrs/2)
 
@@ -131,21 +128,6 @@ defmodule LongOrShort.News.Sources.Pipeline do
           {ing, dedup, err + 1}
       end
     end)
-  end
-
-  defp parse_one(module, raw) do
-    case module.parse_response(raw) do
-      {:ok, attrs_list} ->
-        {:ok, attrs_list}
-
-      {:error, reason} ->
-        Logger.warning(
-          "parse_response error in #{inspect(module)}: " <>
-            "#{inspect(reason)} (raw item dropped)"
-        )
-
-        {:error, reason}
-    end
   end
 
   defp handle_attrs(attrs, {ing, dedup, err}) do
@@ -226,79 +208,7 @@ defmodule LongOrShort.News.Sources.Pipeline do
     end
   end
 
-  defp handle_error(module, reason, state) do
-    retry_count = Map.get(state, :retry_count, 0) + 1
-    next_interval = Backoff.next_interval(module.poll_interval_ms(), retry_count)
-
-    Logger.warning(
-      "Poll error in #{inspect(module)}: #{inspect(reason)} " <>
-        "(retry=#{retry_count}, next in #{next_interval}ms)"
-    )
-
-    # Persist last_error for observability
-    update_source_state(module, {:error, reason})
-
-    next_state = Map.put(state, :retry_count, retry_count)
-    schedule_next(next_interval)
-    {:noreply, next_state}
-  end
-
   defp broadcast_new_article(article) do
     LongOrShort.News.Events.broadcast_new_article(article)
-  end
-
-  defp schedule_first_poll(module) do
-    interval = module.poll_interval_ms()
-
-    case last_success_age_ms(module) do
-      nil ->
-        schedule_next(0)
-
-      age_ms when age_ms >= interval ->
-        schedule_next(0)
-
-      age_ms ->
-        delay = interval - age_ms
-
-        Logger.info(
-          "#{inspect(module)}: deferring first poll by #{delay}ms " <>
-            "(last success #{age_ms}ms ago)"
-        )
-
-        schedule_next(delay)
-    end
-  end
-
-  defp schedule_next(interval_ms), do: Process.send_after(self(), @poll_message, interval_ms)
-
-  defp last_success_age_ms(module) do
-    case Sources.get_source_state(module.source_name(), authorize?: false) do
-      {:ok, %{last_success_at: %DateTime{} = dt}} ->
-        DateTime.diff(DateTime.utc_now(), dt, :millisecond)
-
-      _ ->
-        nil
-    end
-  end
-
-  defp update_source_state(module, :success) do
-    Sources.upsert_source_state(
-      %{
-        source: module.source_name(),
-        last_success_at: DateTime.utc_now(),
-        last_error: nil
-      },
-      actor: SystemActor.new()
-    )
-  end
-
-  defp update_source_state(module, {:error, reason}) do
-    Sources.upsert_source_state(
-      %{
-        source: module.source_name(),
-        last_error: inspect(reason)
-      },
-      actor: SystemActor.new()
-    )
   end
 end
