@@ -316,18 +316,44 @@ laptop to the public internet (WireGuard mesh, ACL-controlled).
 
 ## 11. Daily backups
 
-Append to `crontab -e`:
+```sh
+mkdir -p ~/backups
+```
+
+Append to `crontab -e`. Two gotchas worth understanding before you paste:
+
+1. **PATH** — cron's default `PATH` is just `/usr/bin:/bin`, which on
+   Ubuntu/Debian gives you `/usr/bin/pg_dump` from the base `postgresql-client`
+   package (often 14.x). Postgres 18 server refuses dumps from a 14.x client,
+   so put the asdf shim dir first if your Postgres came from asdf — or replace
+   it with whichever dir holds your real 18.x `pg_dump`.
+2. **`-h /tmp`** — asdf-postgres builds default to `/tmp/` for the unix
+   socket, while libpq inside `postgresql-client` defaults to
+   `/var/run/postgresql/`. Passing `-h /tmp` makes the dump command find the
+   server no matter which client is on `PATH`. If your Postgres listens on
+   `/var/run/postgresql/` instead, drop the flag.
+
+Keep the cron lines ASCII-only — em dashes in comments have caused
+`bad minute` errors on some `crontab` parsers.
 
 ```cron
-# Daily 03:00 — dump the data assets
-0 3 * * * pg_dump long_or_short_dev | gzip > /home/YOUR_USERNAME/backups/long_or_short-$(date +\%Y\%m\%d).sql.gz
+PATH=/home/YOUR_USERNAME/.asdf/shims:/usr/bin:/bin
 
-# Weekly Sunday 04:00 — prune backups older than 30 days
+# Daily 03:00 - dump the data assets
+0 3 * * * pg_dump -h /tmp long_or_short_dev | gzip > /home/YOUR_USERNAME/backups/long_or_short-$(date +\%Y\%m\%d).sql.gz
+
+# Weekly Sunday 04:00 - prune backups older than 30 days
 0 4 * * 0 find /home/YOUR_USERNAME/backups -name "*.sql.gz" -mtime +30 -delete
 ```
 
+Quick end-to-end smoke check (asserts the right `pg_dump`, the right socket,
+and a real SQL dump — not a gzipped error message):
+
 ```sh
-mkdir -p ~/backups
+pg_dump -h /tmp long_or_short_dev | gzip > /tmp/backup-check.sql.gz \
+  && gunzip -c /tmp/backup-check.sql.gz | head -3 \
+  && rm /tmp/backup-check.sql.gz
+# Expect: "-- PostgreSQL database dump"
 ```
 
 Recommended additional: weekly sync `~/backups` to external storage
@@ -338,13 +364,44 @@ failure on the laptop itself.
 
 ## 12. Day-to-day workflow
 
+Common to both setups:
+
 - **Code on the laptop directly** — VS Code / Neovim / your editor of choice
 - **Commit / push** with the laptop's git config
-- **Service auto-restart**: `restart-app` (the alias) after a code change
-- **Live logs**: `journalctl -u long-or-short -f`
 - **Database console**: `psql long_or_short_dev`
 - **Manual seed re-run**: `mix run priv/repo/seeds.exs`
 - **Tail Oban jobs**: `psql long_or_short_dev -c "SELECT id, worker, state, scheduled_at FROM oban_jobs ORDER BY id DESC LIMIT 20;"`
+
+### If you set up Section 9 (systemd service)
+
+- **Service restart**: `restart-app` (the alias) after a code change
+- **Live logs**: `journalctl -u long-or-short -f`
+- **Trade-off**: no IEx attach — debugging requires switching the service off
+  and running `iex -S mix phx.server` by hand
+
+### If you skipped Section 9 (interactive `iex` in a tmux session)
+
+Recommended pattern when the laptop is both dev box and 24/7 server: keep
+the Phoenix server in a detached tmux session so you can SSH or Tailscale
+in and attach an IEx prompt whenever you need one.
+
+```sh
+# First time
+tmux new -s lol
+iex -S mix phx.server   # inside the tmux session
+
+# Detach: Ctrl+B, then D
+# Reattach from anywhere (including over Tailscale SSH):
+tmux attach -t lol
+```
+
+- **Restart**: most edits hot-reload via Phoenix `live_reload`; for config /
+  dep changes, `Ctrl+C, a` inside the IEx session, then `iex -S mix phx.server`
+- **Live logs**: visible right inside the attached tmux session
+- **IEx**: already in front of you whenever you `tmux attach` — call functions,
+  inspect Ash resources, drive Oban jobs interactively
+- **Boot after reboot**: not automatic — start the tmux session manually, or
+  add a `@reboot` cron entry that runs `tmux new -d -s lol 'iex -S mix phx.server'`
 
 ---
 
@@ -382,18 +439,21 @@ cleanly. uuidv7 ids never collide across machines.
 - [ ] `envs/.dev.env` complete with real API keys + admin credentials
 - [ ] `mix ash.setup` ran cleanly, admin user signs in at `/admin`
 - [ ] Sleep / lid-close suspends disabled (`systemctl status sleep.target` → masked)
-- [ ] `long-or-short.service` enabled and active
+- [ ] Phoenix server running — either `long-or-short.service` (Section 9) **or** a detached tmux session with `iex -S mix phx.server` (Section 12)
 - [ ] Tailscale up on the laptop and on the Windows trading laptop
-- [ ] Daily `pg_dump` cron entry installed
+- [ ] Daily `pg_dump` cron entry installed and verified end-to-end (real SQL header, not a gzipped error)
 - [ ] (Optional) Weekly off-machine backup sync
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `mix phx.server` fails: `(Postgrex.Error) FATAL ... password authentication failed` | DB user mismatch | `sudo -u postgres createuser -s "$USER"` again |
+| `mix phx.server` fails: `(Postgrex.Error) FATAL ... password authentication failed` | DB user mismatch | `sudo -u postgres createuser -s "$USER"` again. If your Postgres listens on `/tmp/` (asdf-postgres), add `-h /tmp`: `sudo -u postgres createuser -h /tmp -s "$USER"` |
+| `pg_dump` errors `role "<your-user>" does not exist` even though `psql` works | OS user not registered as a Postgres role | Same fix as above — `createuser -s "$USER"` (with `-h /tmp` if asdf-postgres) |
+| `pg_dump` errors `server version: 18.x; pg_dump version: 14.x ... aborting` | apt's `postgresql-client` (14) shadowing asdf's 18.x in the cron `PATH` | Pin `PATH=...asdf/shims:/usr/bin:/bin` at the top of `crontab -e`, or call `pg_dump` by absolute path |
+| `crontab` install errors with `"-":N: bad minute` | Non-ASCII characters (em dashes) in the cron file | Replace any `—` with plain `-` in comments |
 | `psql -c "SELECT uuidv7()"` errors `function uuidv7() does not exist` | Postgres < 18 installed | Install `postgresql-18` from the PGDG repo (§2) |
 | Server crashes after a few seconds with `:nofile` on `envs/.dev.env` | env file missing or wrong path | Check `pwd`, file must be at `envs/.dev.env` relative to the repo root |
-| Articles count stays 0 after 5+ minutes | API key empty / Alpaca paper account not generated | Re-issue keys at app.alpaca.markets, refresh `envs/.dev.env`, `restart-app` |
-| systemd service exits immediately with `mix: command not found` | asdf shim path missing in service `Environment=` | Re-add the `PATH=` line with the asdf shims directory |
+| Articles count stays 0 after 5+ minutes | API key empty / Alpaca paper account not generated | Re-issue keys at app.alpaca.markets, refresh `envs/.dev.env`, restart the server |
+| (Section 9 only) systemd service exits immediately with `mix: command not found` | asdf shim path missing in service `Environment=` | Re-add the `PATH=` line with the asdf shims directory |
 | Lid close still suspends after the masks | Other power policy still wins | `journalctl -u systemd-logind` to inspect; also check GNOME / DE-specific settings |
