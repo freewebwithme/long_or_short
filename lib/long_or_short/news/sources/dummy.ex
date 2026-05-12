@@ -51,7 +51,11 @@ defmodule LongOrShort.News.Sources.Dummy do
       summary: raw.summary,
       published_at: DateTime.utc_now(),
       raw_category: "General",
-      sentiment: :unknown
+      sentiment: :unknown,
+      # Forwarded to `articles_raw` via Pipeline (LON-32). Even for the
+      # dev-only Dummy source we round-trip raw so end-to-end pipeline
+      # validation exercises the same code paths as production sources.
+      raw_payload: raw
     }
 
     {:ok, [attrs]}

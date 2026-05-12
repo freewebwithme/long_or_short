@@ -27,9 +27,22 @@ defmodule LongOrShort.News.Sources.Pipeline do
               → for each attrs map:
                   Dedup.check_and_mark(source, external_id, symbol)
                     → if first time:
-                        News.ingest_article(attrs, actor: SystemActor.new())
-                          → on success: broadcast {:new_article, article}
+                        News.ingest_article(attrs - :raw_payload, ...)
+                          → on success:
+                              News.create_article_raw(...) fail-soft (LON-32)
+                              broadcast {:new_article, article}
         → reset retry_count, schedule next poll at base interval
+
+  ## Raw payload preservation (LON-32)
+
+  Each `parse_response/1` carries a `:raw_payload` key alongside the
+  normalized article attrs. Pipeline strips it before calling
+  `News.ingest_article/2` (Article schema rejects unknown keys) and,
+  on successful article ingest, upserts a sibling `ArticleRaw` row.
+
+  Raw persistence is **fail-soft** — a failure here logs a warning but
+  the article ingest still counts as success. Raw is debugging data,
+  not on the critical path.
 
   ## Polling flow on error
 
@@ -158,10 +171,13 @@ defmodule LongOrShort.News.Sources.Pipeline do
   end
 
   defp ingest(attrs) do
-    existing_hash = fetch_existing_hash(attrs)
+    {raw_payload, ingest_attrs} = Map.pop(attrs, :raw_payload)
+    existing_hash = fetch_existing_hash(ingest_attrs)
 
-    case News.ingest_article(attrs, actor: SystemActor.new()) do
+    case News.ingest_article(ingest_attrs, actor: SystemActor.new()) do
       {:ok, article} ->
+        persist_raw(article, raw_payload)
+
         if existing_hash != article.content_hash do
           broadcast_new_article(article)
         end
@@ -176,6 +192,29 @@ defmodule LongOrShort.News.Sources.Pipeline do
         )
 
         err
+    end
+  end
+
+  # Fail-soft raw payload persistence (LON-32). A failure here never
+  # affects the article ingest result — raw is debugging data and the
+  # critical path is the normalized Article row.
+  defp persist_raw(_article, nil), do: :ok
+
+  defp persist_raw(article, raw_payload) do
+    case News.create_article_raw(
+           %{article_id: article.id, raw_payload: raw_payload},
+           actor: SystemActor.new()
+         ) do
+      {:ok, _article_raw} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "create_article_raw failed for article #{article.id}: " <>
+            "#{inspect(reason)} (article ingest succeeded, raw lost)"
+        )
+
+        :ok
     end
   end
 

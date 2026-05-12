@@ -77,7 +77,11 @@ defmodule LongOrShort.News.Sources.SecEdgar do
         url: entry.link,
         raw_category: entry.category,
         sentiment: :unknown,
-        published_at: parse_datetime(entry.updated)
+        published_at: parse_datetime(entry.updated),
+        # Forwarded to `articles_raw` via Pipeline (LON-32). `entry` is
+        # the SweetXml-parsed Atom entry map — atom keys get JSON-stringified
+        # by the jsonb codec, which is fine for debugging-only consumption.
+        raw_payload: entry
       }
 
       {:ok, [attrs]}

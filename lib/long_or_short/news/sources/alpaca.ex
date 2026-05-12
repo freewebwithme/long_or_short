@@ -87,7 +87,11 @@ defmodule LongOrShort.News.Sources.Alpaca do
             # vendor lineage without needing a new column.
             raw_category: Map.get(raw, "source"),
             sentiment: :unknown,
-            published_at: published_at
+            published_at: published_at,
+            # Same raw map for every fanned-out attrs — each Article gets
+            # its own ArticleRaw row with the identical payload (LON-32).
+            # Mirrors how `title` is duplicated per ticker.
+            raw_payload: raw
           }
         end
 

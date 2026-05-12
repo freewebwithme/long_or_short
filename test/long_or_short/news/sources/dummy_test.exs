@@ -42,6 +42,8 @@ defmodule LongOrShort.News.Sources.DummyTest do
       assert attrs.raw_category == "General"
       assert attrs.sentiment == :unknown
       assert %DateTime{} = attrs.published_at
+      # LON-32: raw forwarded through for `articles_raw` persistence.
+      assert attrs.raw_payload == raw
     end
 
     test "returns a list (single-element) for the per-ticker fan-out contract" do
@@ -122,7 +124,7 @@ defmodule LongOrShort.News.Sources.DummyTest do
   # ── Integration ────────────────────────────────────────────────
 
   describe "integration (real GenServer)" do
-    test "starting Dummy ingests articles and broadcasts" do
+    test "starting Dummy ingests articles, broadcasts, and persists raw payload" do
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "news:articles")
 
       start_supervised!(Dummy)
@@ -142,6 +144,12 @@ defmodule LongOrShort.News.Sources.DummyTest do
       # And it should be persisted
       {:ok, articles} = News.list_articles(authorize?: false)
       assert length(articles) >= 1
+
+      # LON-32: ArticleRaw populated alongside the Article. Pipeline
+      # persists raw fail-soft after a successful ingest.
+      assert {:ok, raw} = News.get_article_raw(article.id, authorize?: false)
+      assert is_map(raw.raw_payload)
+      assert raw.raw_payload["external_id"] != nil or raw.raw_payload[:external_id] != nil
     end
   end
 end

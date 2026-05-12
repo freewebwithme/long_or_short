@@ -69,7 +69,10 @@ defmodule LongOrShort.News.Sources.PipelineTest do
       summary: "Test summary",
       published_at: DateTime.utc_now(),
       raw_category: "test",
-      sentiment: :unknown
+      sentiment: :unknown,
+      # LON-32: `parse_response/1` impls carry raw through here; Pipeline
+      # strips it before `ingest_article` and persists ArticleRaw fail-soft.
+      raw_payload: %{"external_id" => external_id, "symbol" => symbol}
     }
   end
 
@@ -166,6 +169,70 @@ defmodule LongOrShort.News.Sources.PipelineTest do
 
       assert new_state.retry_count == 0
       assert {:ok, []} = News.list_articles(authorize?: false)
+    end
+  end
+
+  # ── ArticleRaw persistence (LON-32) ────────────────────────────
+
+  describe "run_poll/2 — ArticleRaw persistence" do
+    test "persists ArticleRaw alongside Article on successful ingest" do
+      attrs = valid_attrs("RAWP", "ext-raw-1")
+      raw = raw_with_parse({:ok, [attrs]})
+
+      state = %{
+        retry_count: 0,
+        fetch_news_fun: fn s -> {:ok, [raw], s} end
+      }
+
+      {:noreply, _} = Pipeline.run_poll(MockSource, state)
+
+      assert {:ok, [article]} = News.list_articles(authorize?: false)
+      assert {:ok, article_raw} = News.get_article_raw(article.id, authorize?: false)
+      assert article_raw.raw_payload == %{"external_id" => "ext-raw-1", "symbol" => "RAWP"}
+    end
+
+    test "nil raw_payload skips ArticleRaw save (no error, article still ingested)" do
+      # Source adapter that doesn't carry raw — Pipeline must degrade
+      # gracefully without affecting the article ingest.
+      attrs =
+        valid_attrs("NORAW", "ext-noraw")
+        |> Map.delete(:raw_payload)
+
+      raw = raw_with_parse({:ok, [attrs]})
+
+      state = %{
+        retry_count: 0,
+        fetch_news_fun: fn s -> {:ok, [raw], s} end
+      }
+
+      {:noreply, _} = Pipeline.run_poll(MockSource, state)
+
+      # Article persisted normally
+      assert {:ok, [article]} = News.list_articles(authorize?: false)
+      assert article.title == "Test headline"
+
+      # No ArticleRaw row created
+      assert {:error, %Ash.Error.Invalid{errors: [%Ash.Error.Query.NotFound{}]}} =
+               News.get_article_raw(article.id, authorize?: false)
+    end
+
+    test "ingest_attrs passed to News.ingest_article does not contain :raw_payload" do
+      # Regression guard: Article's :ingest action rejects unknown
+      # keys. If Pipeline forgot to pop :raw_payload, the ingest would
+      # fail and we'd lose the article entirely. This test confirms
+      # the strip-then-ingest contract by relying on a real ingest
+      # succeeding with a raw_payload-carrying attrs map.
+      attrs = valid_attrs("STRIP", "ext-strip")
+      raw = raw_with_parse({:ok, [attrs]})
+
+      state = %{
+        retry_count: 0,
+        fetch_news_fun: fn s -> {:ok, [raw], s} end
+      }
+
+      {:noreply, _} = Pipeline.run_poll(MockSource, state)
+
+      assert {:ok, [_article]} = News.list_articles(authorize?: false)
     end
   end
 

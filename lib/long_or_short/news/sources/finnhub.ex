@@ -91,7 +91,12 @@ defmodule LongOrShort.News.Sources.Finnhub do
         url: Map.get(raw, "url"),
         raw_category: Map.get(raw, "category"),
         sentiment: :unknown,
-        published_at: parse_datetime(Map.get(raw, "datetime"))
+        published_at: parse_datetime(Map.get(raw, "datetime")),
+        # Forwarded through `Sources.Pipeline` and persisted to
+        # `articles_raw` after the article ingest succeeds (LON-32).
+        # Not part of the Article schema; Pipeline strips it before
+        # calling `News.ingest_article/2`.
+        raw_payload: raw
       }
 
       {:ok, [attrs]}

@@ -105,4 +105,41 @@ defmodule LongOrShort.NewsFixtures do
         """
     end
   end
+
+  @doc """
+  Returns valid attrs for `News.create_article_raw/2`. `:article_id` is
+  intentionally omitted — callers supply it from a fixture-built Article.
+  """
+  def valid_article_raw_attrs(overrides \\ %{}) do
+    unique = System.unique_integer([:positive])
+
+    Map.merge(
+      %{
+        raw_payload: %{"id" => unique, "headline" => "Raw payload #{unique}"}
+      },
+      overrides
+    )
+  end
+
+  @doc """
+  Creates an ArticleRaw attached to the given Article. Mirrors
+  `build_filing_raw/2` in the Filings fixtures.
+  """
+  def build_article_raw(article, overrides \\ %{}) do
+    attrs =
+      valid_article_raw_attrs(overrides)
+      |> Map.put(:article_id, article.id)
+
+    case News.create_article_raw(attrs, authorize?: false) do
+      {:ok, raw} ->
+        raw
+
+      {:error, error} ->
+        raise """
+        Failed to create article_raw fixture.
+        attrs: #{inspect(attrs)}
+        error: #{inspect(error)}
+        """
+    end
+  end
 end
