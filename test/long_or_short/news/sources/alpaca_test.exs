@@ -28,6 +28,9 @@ defmodule LongOrShort.News.Sources.AlpacaTest do
       assert attrs.raw_category == "Benzinga"
       assert attrs.sentiment == :unknown
       assert attrs.published_at == ~U[2026-05-11 12:00:00Z]
+      # LON-32: raw_payload is the original input, untouched (including
+      # fields we don't extract — `content`, `author`, `updated_at`).
+      assert attrs.raw_payload == raw
     end
 
     test "multi-symbol article fans out into one attrs map per ticker" do
@@ -52,6 +55,9 @@ defmodule LongOrShort.News.Sources.AlpacaTest do
         assert attrs.title == "Tech sector rallies on Fed dovish signal"
         assert attrs.raw_category == "Benzinga"
         assert attrs.published_at == ~U[2026-05-11 13:30:00Z]
+        # LON-32: every fanned-out attrs carries the same raw map —
+        # each Article gets its own ArticleRaw with identical payload.
+        assert attrs.raw_payload == raw
       end)
     end
 

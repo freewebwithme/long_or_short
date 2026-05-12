@@ -197,6 +197,16 @@ defmodule LongOrShort.News.Article do
       # `Analysis.get_news_analysis_by_article/2` instead.
       filter expr(user_id == ^actor(:id))
     end
+
+    # Raw API payload from the source — cold storage for debugging /
+    # re-analysis / source-bug forensics (LON-32). Mirrors Filing →
+    # FilingRaw. Populated fail-soft by `Sources.Pipeline` after a
+    # successful ingest; a missing `article_raw` is normal for older
+    # articles ingested before this split.
+    has_one :article_raw, LongOrShort.News.ArticleRaw do
+      public? true
+      destination_attribute :article_id
+    end
   end
 
   actions do

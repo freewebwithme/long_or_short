@@ -5,6 +5,11 @@ defmodule LongOrShort.News do
   Feeders (Benzinga, SEC, PR Newswire) ingest into this domain via
   `ingest_article/2`. Analysis results and price reactions live in
   their own domains but reference articles by id.
+
+  Raw API payloads are preserved cold in `LongOrShort.News.ArticleRaw`
+  (table `articles_raw`) so debugging / re-analysis / source-bug forensics
+  can reach ground truth (LON-32). Populated fail-soft by
+  `Sources.Pipeline` after each successful article ingest.
   """
 
   use Ash.Domain, otp_app: :long_or_short
@@ -34,6 +39,12 @@ defmodule LongOrShort.News do
         args: [:ticker_ids]
 
       define :list_articles_by_ticker_symbol, action: :by_ticker_symbol, args: [:symbol]
+    end
+
+    resource LongOrShort.News.ArticleRaw do
+      define :create_article_raw, action: :create
+      define :get_article_raw, action: :read, get_by: [:article_id]
+      define :destroy_article_raw, action: :destroy
     end
   end
 end
