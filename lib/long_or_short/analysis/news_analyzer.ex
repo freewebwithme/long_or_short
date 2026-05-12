@@ -59,9 +59,13 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
 
     * `{:error, {:ai_call_failed, reason}}` — provider error from `AI.call/3`
     * `{:error, :no_tool_call}` — model returned text instead of invoking the tool
-    * `{:error, {:invalid_enum, field, value}}` — model returned a value not in the resource's enum
     * `{:error, :no_trading_profile}` — actor has no `TradingProfile` row (run the seed)
     * any Ash error — passed through from the upsert
+
+  Out-of-enum values from the LLM (e.g. `catalyst_type: "analyst"`)
+  do **not** fail the analysis — they fall back to the field's safe
+  default (LON-146). The warning is still logged and the original
+  value is preserved in `:raw_response` for audit.
   """
 
   require Logger
@@ -76,9 +80,9 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
   @prior_limit 10
 
   # Mirrored from `NewsAnalysis` resource constraints (LON-79). Used to
-  # validate atoms coming back from the LLM via `String.to_existing_atom/1`
-  # — anything outside these lists fails fast with an :invalid_enum error
-  # instead of trying to insert and getting a less helpful Ash error.
+  # validate atoms coming back from the LLM via `String.to_existing_atom/1`.
+  # Out-of-enum values fall back to a per-field safe default (LON-146)
+  # instead of failing the whole analysis — see `safe_default/1`.
   @catalyst_strengths ~w(strong medium weak unknown)a
   @catalyst_types ~w(partnership ma fda earnings offering rfp contract_win
                          guidance clinical regulatory other)a
@@ -204,16 +208,22 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
   end
 
   defp build_attrs(article, input, response, dilution_profile, opts) do
-    with {:ok, catalyst_strength} <-
-           to_enum_atom(:catalyst_strength, input["catalyst_strength"], @catalyst_strengths),
-         {:ok, catalyst_type} <-
-           to_enum_atom(:catalyst_type, input["catalyst_type"], @catalyst_types),
-         {:ok, sentiment} <- to_enum_atom(:sentiment, input["sentiment"], @sentiments),
-         {:ok, verdict} <- to_enum_atom(:verdict, input["verdict"], @verdicts) do
-      ticker = article.ticker
-      actor = Keyword.fetch!(opts, :actor)
+    # Enum coercion is always-succeeds (LON-146): an out-of-enum value
+    # from the LLM is logged and replaced with the field's safe default
+    # so the rest of the analysis (detail_summary, recommendation, etc.)
+    # still persists. The original raw value is preserved in
+    # `:raw_response` via `build_raw_response/2`.
+    catalyst_strength =
+      to_enum_atom(:catalyst_strength, input["catalyst_strength"], @catalyst_strengths)
 
-      attrs = %{
+    catalyst_type = to_enum_atom(:catalyst_type, input["catalyst_type"], @catalyst_types)
+    sentiment = to_enum_atom(:sentiment, input["sentiment"], @sentiments)
+    verdict = to_enum_atom(:verdict, input["verdict"], @verdicts)
+
+    ticker = article.ticker
+    actor = Keyword.fetch!(opts, :actor)
+
+    attrs = %{
         article_id: article.id,
         # Trader who triggered this analysis (LON-109). The persistence
         # call still runs as SystemActor for authorization, but this
@@ -257,8 +267,7 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
         raw_response: build_raw_response(response, dilution_profile)
       }
 
-      {:ok, attrs}
-    end
+    {:ok, attrs}
   end
 
   # ── Dilution snapshot helpers (LON-117) ────────────────────────────
@@ -299,12 +308,16 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
     raw |> Jason.encode!() |> Jason.decode!()
   end
 
+  # LON-146: out-of-enum values from the LLM fall back to the field's
+  # safe default instead of failing the whole analysis. Warning log
+  # stays so model-drift regressions remain trackable; the original
+  # value is preserved in `:raw_response` for audit.
   defp to_enum_atom(field, value, allowed) when is_atom(value) do
     if value in allowed do
-      {:ok, value}
+      value
     else
       log_invalid_enum(field, value)
-      {:error, {:invalid_enum, field, value}}
+      safe_default(field)
     end
   end
 
@@ -312,21 +325,29 @@ defmodule LongOrShort.Analysis.NewsAnalyzer do
     atom = String.to_existing_atom(value)
 
     if atom in allowed do
-      {:ok, atom}
+      atom
     else
       log_invalid_enum(field, value)
-      {:error, {:invalid_enum, field, value}}
+      safe_default(field)
     end
   rescue
     ArgumentError ->
       log_invalid_enum(field, value)
-      {:error, {:invalid_enum, field, value}}
+      safe_default(field)
   end
 
   defp to_enum_atom(field, value, _allowed) do
     log_invalid_enum(field, value)
-    {:error, {:invalid_enum, field, value}}
+    safe_default(field)
   end
+
+  # Per-enum catch-all defaults. Function clauses (not a map) so adding
+  # a new enum without a default is a compile-time error rather than a
+  # silent KeyError.
+  defp safe_default(:catalyst_strength), do: :unknown
+  defp safe_default(:catalyst_type), do: :other
+  defp safe_default(:sentiment), do: :neutral
+  defp safe_default(:verdict), do: :skip
 
   defp log_invalid_enum(field, value) do
     Logger.warning("[NewsAnalyzer] Invalid #{field} value from LLM: #{inspect(value)}")
