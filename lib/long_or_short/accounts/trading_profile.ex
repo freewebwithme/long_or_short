@@ -42,13 +42,14 @@ defmodule LongOrShort.Accounts.TradingProfile do
     them.
   ## Policies
 
-  SystemActor and admins bypass all checks. Trader role can read and
-  create/upsert — this **differs from**
-  `LongOrShort.Analysis.MomentumAnalysis` (where writes happen via
-  SystemActor only) because TradingProfile is user-owned configuration,
-  not system output. LON-15 will tighten the trader policy to "only
-  their own profile" once auth hardens; Phase 1 single-user makes
-  this moot.
+  SystemActor and admins bypass all checks. Trader role is scoped to
+  their own profile — verified per-action via the policy expressions
+  below (LON-139). For create/upsert (where Ash policy expressions
+  cannot reference changeset attributes), the ownership invariant is
+  enforced as an in-action validation.
+
+  The default `:read` action has no trader-facing policy clause and is
+  reachable only via system/admin bypass.
   """
 
   use Ash.Resource,
@@ -186,6 +187,8 @@ defmodule LongOrShort.Accounts.TradingProfile do
       primary? true
 
       accept @fields
+
+      validate LongOrShort.Validations.OwnedByActor
     end
 
     create :upsert do
@@ -204,6 +207,8 @@ defmodule LongOrShort.Accounts.TradingProfile do
         :price_max,
         :float_max
       ]
+
+      validate LongOrShort.Validations.OwnedByActor
     end
 
     update :update do
@@ -238,16 +243,22 @@ defmodule LongOrShort.Accounts.TradingProfile do
       authorize_if always()
     end
 
-    policy action_type(:read) do
+    # Trader can read their own profile via :get_by_user.
+    policy action(:get_by_user) do
+      authorize_if expr(^arg(:user_id) == ^actor(:id))
+    end
+
+    # Trader can create/upsert their own profile. Ownership invariant
+    # (user_id == actor.id) is enforced in-action via
+    # `LongOrShort.Validations.OwnedByActor` because Ash policies cannot
+    # reference changeset attributes on create.
+    policy action_type(:create) do
       authorize_if actor_present()
     end
 
-    # Trader can manage their own trading profile — TradingProfile is
-    # user-owned config, not system output. Phase 1 single-user, so
-    # `actor_present()` is sufficient. LON-15 will tighten this to
-    # "only the profile's own user" once auth is hardened.
-    policy action_type([:create, :update]) do
-      authorize_if actor_present()
+    # Trader can update their own profile.
+    policy action(:update) do
+      authorize_if expr(user_id == ^actor(:id))
     end
   end
 end

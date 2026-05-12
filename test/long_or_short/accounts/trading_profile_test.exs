@@ -248,40 +248,74 @@ defmodule LongOrShort.Accounts.TradingProfileTest do
                )
     end
 
-    test "trader CAN create (differs from MomentumAnalysis where trader is read-only)" do
+    test "trader can create their own profile" do
+      trader = build_trader_user()
+
+      assert {:ok, _} =
+               Accounts.create_trading_profile(
+                 valid_trading_profile_attrs(%{user_id: trader.id}),
+                 actor: trader
+               )
+    end
+
+    test "trader can upsert their own profile" do
+      trader = build_trader_user()
+
+      assert {:ok, _} =
+               Accounts.upsert_trading_profile(
+                 valid_trading_profile_attrs(%{user_id: trader.id}),
+                 actor: trader
+               )
+    end
+
+    test "trader can read their own profile" do
+      trader = build_trader_user()
+      _profile = build_trading_profile(%{user_id: trader.id})
+
+      assert {:ok, %{user_id: user_id}} =
+               Accounts.get_trading_profile_by_user(trader.id, actor: trader)
+
+      assert user_id == trader.id
+    end
+
+    test "nil actor sees nil read", %{user: user} do
+      assert {:ok, nil} =
+               Accounts.get_trading_profile_by_user(user.id, actor: nil)
+    end
+
+    # LON-139 regression tests — ownership scoping.
+
+    test "trader cannot create a profile for another user (validation error)" do
       trader = build_trader_user()
       other = build_trader_user()
 
-      assert {:ok, _} =
+      assert {:error, %Ash.Error.Invalid{}} =
                Accounts.create_trading_profile(
                  valid_trading_profile_attrs(%{user_id: other.id}),
                  actor: trader
                )
     end
 
-    test "trader can upsert" do
+    test "trader cannot upsert a profile for another user (validation error)" do
       trader = build_trader_user()
       other = build_trader_user()
 
-      assert {:ok, _} =
+      assert {:error, %Ash.Error.Invalid{}} =
                Accounts.upsert_trading_profile(
                  valid_trading_profile_attrs(%{user_id: other.id}),
                  actor: trader
                )
     end
 
-    test "trader can read profiles", %{profile: profile} do
+    test "trader passing another user's id to get_by_user sees nil (filter semantics)", %{
+      profile: profile
+    } do
       trader = build_trader_user()
 
-      {:ok, found} =
-        Accounts.get_trading_profile_by_user(profile.user_id, actor: trader)
-
-      assert found.id == profile.id
-    end
-
-    test "nil actor sees nil read", %{user: user} do
+      # The setup `profile` belongs to a different trader. Filter-style
+      # read policy: mismatched argument yields nil, not Forbidden.
       assert {:ok, nil} =
-               Accounts.get_trading_profile_by_user(user.id, actor: nil)
+               Accounts.get_trading_profile_by_user(profile.user_id, actor: trader)
     end
   end
 

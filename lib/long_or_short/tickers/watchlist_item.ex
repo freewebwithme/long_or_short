@@ -105,27 +105,9 @@ defmodule LongOrShort.Tickers.WatchlistItem do
 
       # Ownership scoping for create — Ash policy `authorize_if expr(...)`
       # cannot reference changeset attributes on a create action (the
-      # row doesn't exist yet), so the trader-can-only-create-for-self
-      # invariant is enforced here as a validation. System/admin actors
-      # bypass. Nil actor is left to the policy `actor_present()` check.
-      validate fn changeset, %{actor: actor} ->
-        cond do
-          is_nil(actor) ->
-            :ok
-
-          Map.get(actor, :system?) == true ->
-            :ok
-
-          Map.get(actor, :role) == :admin ->
-            :ok
-
-          Ash.Changeset.get_attribute(changeset, :user_id) == actor.id ->
-            :ok
-
-          true ->
-            {:error, field: :user_id, message: "must match the authenticated user"}
-        end
-      end
+      # row doesn't exist yet). Shared validation enforces the
+      # trader-can-only-create-for-self invariant; system/admin bypass.
+      validate LongOrShort.Validations.OwnedByActor
 
       # Enqueue a dilution-analysis backfill for the ticker so the
       # /dilution UI is populated immediately rather than waiting for
