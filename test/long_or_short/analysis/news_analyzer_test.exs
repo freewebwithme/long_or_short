@@ -240,6 +240,72 @@ defmodule LongOrShort.Analysis.NewsAnalyzerTest do
     end
   end
 
+  # LON-146: when the LLM returns an enum value outside the allowed
+  # list, we no longer fail the whole analysis. The field falls back
+  # to a per-enum safe default and the row persists so the trader
+  # still sees `detail_summary`, `detail_recommendation`, etc.
+  describe "analyze/2 — out-of-enum fallbacks (LON-146)" do
+    test "invalid catalyst_strength → :unknown fallback, analysis persists", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ ->
+        tool_response(valid_tool_input(%{"catalyst_strength" => "blistering"}))
+      end)
+
+      assert {:ok, analysis} = NewsAnalyzer.analyze(article, actor: user)
+      assert analysis.catalyst_strength == :unknown
+    end
+
+    test "invalid catalyst_type → :other fallback, original preserved in raw_response", %{
+      user: user,
+      article: article
+    } do
+      # The exact repro from the ticket: LLM returned "analyst" for a
+      # "Top 10 Analyst Forecasts" article, which is not in the allowed
+      # catalyst_type list. With the fix, the analysis row persists
+      # with catalyst_type=:other and the raw "analyst" string lives on
+      # in `raw_response` for audit.
+      MockProvider.stub(fn _, _, _ ->
+        tool_response(valid_tool_input(%{"catalyst_type" => "analyst"}))
+      end)
+
+      assert {:ok, analysis} = NewsAnalyzer.analyze(article, actor: user)
+      assert analysis.catalyst_type == :other
+
+      # Audit-preservation: the original out-of-enum value survives in
+      # raw_response so a future operator can trace LLM drift.
+      [%{"input" => input}] = analysis.raw_response["tool_calls"]
+      assert input["catalyst_type"] == "analyst"
+    end
+
+    test "invalid sentiment → :neutral fallback, analysis persists", %{
+      user: user,
+      article: article
+    } do
+      MockProvider.stub(fn _, _, _ ->
+        tool_response(valid_tool_input(%{"sentiment" => "euphoric"}))
+      end)
+
+      assert {:ok, analysis} = NewsAnalyzer.analyze(article, actor: user)
+      assert analysis.sentiment == :neutral
+    end
+
+    test "invalid verdict → :skip fallback (conservative), analysis persists", %{
+      user: user,
+      article: article
+    } do
+      # Conservative default: when the model returns a verdict we can't
+      # interpret, we don't recommend trading on it.
+      MockProvider.stub(fn _, _, _ ->
+        tool_response(valid_tool_input(%{"verdict" => "buy"}))
+      end)
+
+      assert {:ok, analysis} = NewsAnalyzer.analyze(article, actor: user)
+      assert analysis.verdict == :skip
+    end
+  end
+
   describe "analyze/2 — errors" do
     test "AI provider error → {:error, {:ai_call_failed, reason}}", %{
       user: user,
@@ -257,18 +323,6 @@ defmodule LongOrShort.Analysis.NewsAnalyzerTest do
       end)
 
       assert {:error, :no_tool_call} = NewsAnalyzer.analyze(article, actor: user)
-    end
-
-    test "invalid enum value → {:error, {:invalid_enum, field, value}}", %{
-      user: user,
-      article: article
-    } do
-      MockProvider.stub(fn _, _, _ ->
-        tool_response(valid_tool_input(%{"verdict" => "buy"}))
-      end)
-
-      assert {:error, {:invalid_enum, :verdict, "buy"}} =
-               NewsAnalyzer.analyze(article, actor: user)
     end
 
     test "actor without a TradingProfile → {:error, :no_trading_profile}", %{article: article} do
