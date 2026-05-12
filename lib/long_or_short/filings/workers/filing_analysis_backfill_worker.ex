@@ -56,6 +56,7 @@ defmodule LongOrShort.Filings.Workers.FilingAnalysisBackfillWorker do
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.Filings
   alias LongOrShort.Filings.Filing
+  alias LongOrShort.Workers.BatchHelper
 
   @default_lookback_days 90
 
@@ -115,37 +116,39 @@ defmodule LongOrShort.Filings.Workers.FilingAnalysisBackfillWorker do
         "#{ticker_id} (#{lookback_days}d)"
     )
 
-    {ok_count, err_count, skip_count} =
-      Enum.reduce(filings, {0, 0, 0}, fn filing, {ok, err, skip} ->
-        case Filings.analyze_filing(filing.id) do
-          {:ok, _analysis} ->
-            {ok + 1, err, skip}
-
-          {:error, reason}
-          when reason in [:filing_raw_missing, :not_supported, :no_relevant_content] ->
-            {ok, err, skip + 1}
-
-          {:error, reason} ->
-            Logger.warning(
-              "FilingAnalysisBackfillWorker: analyze failed for #{filing.id} — " <>
-                inspect(reason)
-            )
-
-            {ok, err + 1, skip}
-        end
-      end)
+    counts =
+      BatchHelper.process_batch(filings, &analyze_one/1,
+        initial: %{ok: 0, error: 0, skipped: 0}
+      )
 
     Logger.info(
-      "FilingAnalysisBackfillWorker: complete — #{ok_count} ok, " <>
-        "#{err_count} failed, #{skip_count} skipped"
+      "FilingAnalysisBackfillWorker: complete — #{counts.ok} ok, " <>
+        "#{counts.error} failed, #{counts.skipped} skipped"
     )
 
-    :telemetry.execute(
-      [:long_or_short, :filing_analysis_backfill, :complete],
-      %{ok: ok_count, error: err_count, skipped: skip_count, total: total},
-      %{ticker_id: ticker_id, lookback_days: lookback_days}
-    )
+    BatchHelper.emit_complete_telemetry(:filing_analysis_backfill, counts, total, %{
+      ticker_id: ticker_id,
+      lookback_days: lookback_days
+    })
 
     :ok
+  end
+
+  defp analyze_one(filing) do
+    case Filings.analyze_filing(filing.id) do
+      {:ok, _analysis} ->
+        :ok
+
+      {:error, reason}
+      when reason in [:filing_raw_missing, :not_supported, :no_relevant_content] ->
+        :skip
+
+      {:error, reason} ->
+        Logger.warning(
+          "FilingAnalysisBackfillWorker: analyze failed for #{filing.id} — #{inspect(reason)}"
+        )
+
+        :error
+    end
   end
 end
