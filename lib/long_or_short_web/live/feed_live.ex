@@ -38,7 +38,6 @@ defmodule LongOrShortWeb.FeedLive do
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.{ArticleComponents, TickerAutocomplete}
   alias LongOrShort.{Analysis, News, Tickers}
-  alias LongOrShort.Analysis.NewsAnalyzer
 
   @page_limit 30
 
@@ -84,7 +83,7 @@ defmodule LongOrShortWeb.FeedLive do
     else
       case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
         {:ok, article} ->
-          spawn_analyzer(article, actor, self())
+          LongOrShortWeb.Live.AsyncAnalysis.spawn_analyzer(article, actor, self())
 
           socket =
             socket
@@ -255,7 +254,7 @@ defmodule LongOrShortWeb.FeedLive do
       socket
       |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
       |> refresh_card(article_id)
-      |> put_flash(:error, "Analysis failed: #{format_error(reason)}")
+      |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")
 
     {:noreply, socket}
   end
@@ -419,27 +418,8 @@ defmodule LongOrShortWeb.FeedLive do
     end
   end
 
-  defp spawn_analyzer(article, actor, parent) do
-    Task.Supervisor.start_child(LongOrShort.Analysis.TaskSupervisor, fn ->
-      case NewsAnalyzer.analyze(article, actor: actor) do
-        {:ok, _analysis} ->
-          # Success delivered via PubSub → handle_info({:news_analysis_ready, _}, _)
-          :ok
-
-        {:error, reason} ->
-          send(parent, {:analyze_failed, article.id, reason})
-      end
-    end)
-  end
-
   defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a
   defp extract_analysis(_), do: nil
-
-  defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
-  defp format_error(:no_tool_call), do: "Model returned an unexpected response."
-  defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
-  defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
-  defp format_error(reason), do: inspect(reason)
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)

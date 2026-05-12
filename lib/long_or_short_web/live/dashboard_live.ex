@@ -28,7 +28,6 @@ defmodule LongOrShortWeb.DashboardLive do
   use LongOrShortWeb, :live_view
 
   alias LongOrShort.{Analysis, Indices, News, Tickers}
-  alias LongOrShort.Analysis.NewsAnalyzer
   alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.Components.ArticleComponents
@@ -92,7 +91,7 @@ defmodule LongOrShortWeb.DashboardLive do
     else
       case News.get_article(article_id, load: [:ticker, :news_analysis], actor: actor) do
         {:ok, article} ->
-          spawn_analyzer(article, actor, self())
+          LongOrShortWeb.Live.AsyncAnalysis.spawn_analyzer(article, actor, self())
 
           socket =
             socket
@@ -218,7 +217,7 @@ defmodule LongOrShortWeb.DashboardLive do
      socket
      |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
      |> reload_article_in_lists(article_id)
-     |> put_flash(:error, "Analysis failed: #{format_error(reason)}")}
+     |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")}
   end
 
   def handle_info({:watchlist_changed, _user_id}, socket) do
@@ -626,18 +625,6 @@ defmodule LongOrShortWeb.DashboardLive do
     |> Enum.each(&Analysis.Events.subscribe_for_article/1)
   end
 
-  defp spawn_analyzer(article, actor, parent) do
-    Task.Supervisor.start_child(LongOrShort.Analysis.TaskSupervisor, fn ->
-      case NewsAnalyzer.analyze(article, actor: actor) do
-        {:ok, _analysis} ->
-          # Success delivered via PubSub → handle_info({:news_analysis_ready, _}, _)
-          :ok
-
-        {:error, reason} ->
-          send(parent, {:analyze_failed, article.id, reason})
-      end
-    end)
-  end
 
   defp replace_article_in_lists(socket, %{id: id} = article) do
     socket
@@ -708,11 +695,6 @@ defmodule LongOrShortWeb.DashboardLive do
     end
   end
 
-  defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
-  defp format_error(:no_tool_call), do: "Model returned an unexpected response."
-  defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
-  defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
-  defp format_error(reason), do: inspect(reason)
 
   defp index_color(pct) do
     cond do

@@ -21,7 +21,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
   use LongOrShortWeb, :live_view
 
   alias LongOrShort.{Analysis, News, Tickers}
-  alias LongOrShort.Analysis.{Events, NewsAnalyzer}
+  alias LongOrShort.Analysis.Events
   alias LongOrShortWeb.Live.Components.{ArticleComponents, NewsComponents, TickerAutocomplete}
 
   @recent_page_limit 20
@@ -145,7 +145,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
             # Subscribe before spawning to avoid a race where the broadcast
             # arrives before handle_params sets up the subscription.
             if connected?(socket), do: Events.subscribe_for_article(article.id)
-            spawn_analyzer(article, actor, self())
+            LongOrShortWeb.Live.AsyncAnalysis.spawn_analyzer(article, actor, self())
 
             {:noreply,
              socket
@@ -154,7 +154,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
           {:error, reason} ->
             {:noreply,
-             put_flash(socket, :error, "Could not save article: #{format_error(reason)}")}
+             put_flash(socket, :error, "Could not save article: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")}
         end
     end
   end
@@ -171,7 +171,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
          "Set up your trader profile at /profile before running analysis."
        )}
     else
-      spawn_analyzer(article, actor, self())
+      LongOrShortWeb.Live.AsyncAnalysis.spawn_analyzer(article, actor, self())
       {:noreply, assign(socket, :analyzing?, true)}
     end
   end
@@ -284,7 +284,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
     {:noreply,
      socket
      |> assign(:analyzing?, false)
-     |> put_flash(:error, "Analysis failed: #{format_error(reason)}")}
+     |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")}
   end
 
   # ── Public helpers ────────────────────────────────────────────────────
@@ -492,26 +492,12 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
   # ── Private ───────────────────────────────────────────────────────────
 
-  defp spawn_analyzer(article, actor, parent) do
-    Task.Supervisor.start_child(LongOrShort.Analysis.TaskSupervisor, fn ->
-      case NewsAnalyzer.analyze(article, actor: actor) do
-        {:ok, _analysis} -> :ok
-        {:error, reason} -> send(parent, {:analyze_failed, article.id, reason})
-      end
-    end)
-  end
-
   defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a
   defp extract_analysis(_), do: nil
 
   defp parse_source("other"), do: :other
   defp parse_source(_), do: :benzinga
 
-  defp format_error({:ai_call_failed, _}), do: "AI provider failed — try again."
-  defp format_error(:no_tool_call), do: "Model returned an unexpected response."
-  defp format_error({:invalid_enum, field, value}), do: "Bad #{field} value: #{inspect(value)}"
-  defp format_error(:no_trading_profile), do: "Set up your TradingProfile first."
-  defp format_error(reason), do: inspect(reason)
 
   # ── History helpers (LON-108) ─────────────────────────────────────────
 
