@@ -395,7 +395,18 @@ defmodule LongOrShortWeb.MorningBriefLive do
     articles
     |> Enum.group_by(&dedup_key/1)
     |> Enum.map(fn {_key, group} -> collapse(group) end)
+    # Match the action's intended order (`published_at: :desc`,
+    # `id: :desc` tiebreak). LON-155: sorting by `id` alone surfaces
+    # recently-INGESTED-but-old articles above recently-PUBLISHED-
+    # but-earlier-ingested ones — looked like "filter broken" on
+    # tab switch because the trader sees old 2h-pub articles ahead
+    # of fresh 30min-pub ones.
+    #
+    # Two-pass to leverage Elixir's stable sort: id-desc first sets
+    # the tiebreak order, then published_at-desc wins on equal
+    # timestamps.
     |> Enum.sort_by(& &1.id, :desc)
+    |> Enum.sort_by(& &1.published_at, {:desc, DateTime})
   end
 
   defp dedup_key(%{external_id: nil, id: id}), do: {:unique, id}
