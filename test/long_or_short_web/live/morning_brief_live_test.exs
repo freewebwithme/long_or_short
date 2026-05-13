@@ -295,6 +295,43 @@ defmodule LongOrShortWeb.MorningBriefLiveTest do
       assert html =~ "SNDK"
     end
 
+    test "deduped rows are ordered by published_at desc, NOT insertion-time desc (LON-155)",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "ORDERED"})
+
+      # Build articles in INSERTION order that's intentionally the
+      # OPPOSITE of publish order. Inserting old-publish first, then
+      # fresh-publish — UUIDv7 ids will be insertion-ascending while
+      # published_at values run the other way.
+      build_article_for_ticker(ticker, %{
+        title: "OLD-PUB-INSERTED-FIRST",
+        external_id: "ext-old-pub",
+        source: "alpaca",
+        published_at: DateTime.add(DateTime.utc_now(), -2 * 3600, :second)
+      })
+
+      build_article_for_ticker(ticker, %{
+        title: "FRESH-PUB-INSERTED-LATER",
+        external_id: "ext-fresh-pub",
+        source: "alpaca",
+        published_at: DateTime.add(DateTime.utc_now(), -10 * 60, :second)
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      # The fresh-pub article must appear BEFORE the old-pub one in
+      # the rendered HTML — pre-fix it landed below because dedup
+      # sorted on id-desc which matched insertion order.
+      fresh_idx =
+        :binary.match(html, "FRESH-PUB-INSERTED-LATER") |> elem(0)
+
+      old_idx =
+        :binary.match(html, "OLD-PUB-INSERTED-FIRST") |> elem(0)
+
+      assert fresh_idx < old_idx,
+             "expected fresh-published article to render above old-published one"
+    end
+
     test "same external_id but different sources stays as separate rows", %{conn: conn} do
       t = build_ticker(%{symbol: "DIST"})
 
