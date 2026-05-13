@@ -58,7 +58,14 @@ config :long_or_short, Oban,
        # other UTC-anchored daily jobs above). Idempotent — dedup
        # absorbs duplicates the regular 60s timer would otherwise
        # produce in the same window.
-       {"0,30 * * * *", LongOrShort.News.MorningBoundaryPollWorker}
+       {"0,30 * * * *", LongOrShort.News.MorningBoundaryPollWorker},
+       # Morning Brief generation — every 15min UTC; the worker
+       # itself filters to the three ET wall-clock windows
+       # (05:00 / 08:45 / 10:15 ET) on weekdays (LON-151). Same
+       # worker-side-filter pattern as the boundary poll above —
+       # we can't promote a per-entry timezone without shifting
+       # the UTC-anchored daily jobs at the top of this list.
+       {"0,15,30,45 * * * *", LongOrShort.MorningBrief.CronWorker}
      ]}
   ]
 
@@ -266,6 +273,14 @@ config :long_or_short, LongOrShort.AI.Providers.Qwen,
 # Setting it here ensures dev/test (which skip runtime.exs in some
 # flows) still has a value if the provider is exercised.
 config :long_or_short, :qwen_region, :singapore
+
+# Morning Brief provider (LON-151). Module that exports
+# `call_with_search/2` returning `{:ok, %{text, citations, usage,
+# search_calls}}`. Defaults to Claude (LON-149 Phase 1 — Haiku 4.5
+# per `ANTHROPIC_MODEL` env, escapable to Sonnet 4.6 by env flip).
+# LON-148 will swap this to `LongOrShort.AI.Providers.QwenNative`
+# if/when the Qwen fallback path is triggered.
+config :long_or_short, :morning_brief_provider, LongOrShort.AI.Providers.Claude
 
 # Filing-extraction model map (LON-113).
 #
