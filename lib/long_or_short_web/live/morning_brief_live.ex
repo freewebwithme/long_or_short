@@ -29,8 +29,11 @@ defmodule LongOrShortWeb.MorningBriefLive do
 
   use LongOrShortWeb, :live_view
 
+  alias LongOrShort.Analysis
+  alias LongOrShort.Analysis.MorningBriefDigest
   alias LongOrShort.News
   alias LongOrShort.Tickers
+  alias LongOrShortWeb.Live.MorningBrief.BriefCard
   alias LongOrShortWeb.MorningBrief.Bucket
 
   @page_limit 50
@@ -48,11 +51,15 @@ defmodule LongOrShortWeb.MorningBriefLive do
     if connected?(socket), do: News.Events.subscribe()
 
     watchlist_ticker_ids = load_watchlist_ticker_ids(socket.assigns.current_user)
+    et_now = Bucket.et_now()
+    default_bucket = default_brief_bucket(et_now)
 
     socket =
       socket
       |> assign(:watchlist_ticker_ids, watchlist_ticker_ids)
       |> assign(:view_options, @view_options)
+      |> assign(:brief_bucket, default_bucket)
+      |> load_brief(default_bucket, et_now)
       |> stream(:articles, [])
 
     {:ok, socket}
@@ -83,6 +90,21 @@ defmodule LongOrShortWeb.MorningBriefLive do
   def handle_event("toggle_focus", _params, socket) do
     new_focus = if socket.assigns.focus == :watchlist, do: :all, else: :watchlist
     {:noreply, push_patch(socket, to: url_for(socket.assigns.view_mode, new_focus))}
+  end
+
+  def handle_event("select_bucket", %{"bucket" => bucket_str}, socket) do
+    case parse_brief_bucket(bucket_str) do
+      nil ->
+        {:noreply, socket}
+
+      bucket ->
+        socket =
+          socket
+          |> assign(:brief_bucket, bucket)
+          |> load_brief(bucket, Bucket.et_now())
+
+        {:noreply, socket}
+    end
   end
 
   def handle_event("load_more", _params, socket) do
@@ -157,6 +179,12 @@ defmodule LongOrShortWeb.MorningBriefLive do
               else: "articles"}
           </p>
         </div>
+
+        <BriefCard.brief_card
+          status={@brief_status}
+          digest={@brief}
+          bucket={@brief_bucket}
+        />
 
         <div class="mb-4 flex gap-2 flex-wrap items-center">
           <div class="join">
@@ -245,6 +273,66 @@ defmodule LongOrShortWeb.MorningBriefLive do
     </Layouts.app>
     """
   end
+
+  # ── brief loading (LON-152) ────────────────────────────────────
+
+  defp load_brief(socket, bucket, %DateTime{} = et_now) do
+    actor = socket.assigns.current_user
+    today = DateTime.to_date(et_now)
+
+    case Analysis.get_digest(today, bucket, actor: actor) do
+      {:ok, %MorningBriefDigest{} = digest} ->
+        socket
+        |> assign(:brief, digest)
+        |> assign(:brief_status, :fresh)
+
+      _ ->
+        # No fresh row for today/this bucket — fall back to the most
+        # recent digest across any (bucket, date) as a stale cache. If
+        # there's nothing at all, render the empty state instead.
+        case fetch_latest_digest(actor) do
+          nil ->
+            socket
+            |> assign(:brief, nil)
+            |> assign(:brief_status, :empty)
+
+          digest ->
+            socket
+            |> assign(:brief, digest)
+            |> assign(:brief_status, :stale)
+        end
+    end
+  end
+
+  defp fetch_latest_digest(actor) do
+    case Analysis.list_digests(actor: actor, page: [limit: 1]) do
+      {:ok, %Ash.Page.Keyset{results: [digest | _]}} -> digest
+      {:ok, [digest | _]} -> digest
+      _ -> nil
+    end
+  end
+
+  # Maps the current ET wall-clock to the most recently generated
+  # bucket — the user lands on the freshest brief available.
+  #   05:00–08:44 → :overnight  (cron fires 05:00 ET)
+  #   08:45–10:14 → :premarket  (cron fires 08:45 ET)
+  #   10:15 onward → :after_open (cron fires 10:15 ET)
+  #   00:00–04:59 → :after_open  (yesterday's last brief; via stale path)
+  defp default_brief_bucket(%DateTime{} = et_now) do
+    cond do
+      et_now.hour > 10 -> :after_open
+      et_now.hour == 10 and et_now.minute >= 15 -> :after_open
+      et_now.hour > 8 -> :premarket
+      et_now.hour == 8 and et_now.minute >= 45 -> :premarket
+      et_now.hour >= 5 -> :overnight
+      true -> :after_open
+    end
+  end
+
+  defp parse_brief_bucket("overnight"), do: :overnight
+  defp parse_brief_bucket("premarket"), do: :premarket
+  defp parse_brief_bucket("after_open"), do: :after_open
+  defp parse_brief_bucket(_), do: nil
 
   # ── data loading ───────────────────────────────────────────────
 
