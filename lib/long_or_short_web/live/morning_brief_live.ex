@@ -117,14 +117,19 @@ defmodule LongOrShortWeb.MorningBriefLive do
            page: [after: socket.assigns.last_cursor, limit: @page_limit]
          ) do
       {:ok, %Ash.Page.Keyset{results: articles, more?: more}} ->
+        # Dedup within the batch only — cross-batch duplicates (same
+        # external_id split across two pages) survive. Acceptable
+        # tradeoff for V1 since pagination keyset is stable on raw id.
+        deduped = dedup_articles(articles)
+
         socket =
-          articles
-          |> Enum.reduce(socket, fn article, sock ->
-            stream_insert(sock, :articles, article, at: -1)
+          deduped
+          |> Enum.reduce(socket, fn row, sock ->
+            stream_insert(sock, :articles, row, at: -1)
           end)
           |> assign(:last_cursor, last_keyset(articles, socket.assigns.last_cursor))
           |> assign(:more?, more)
-          |> update(:article_count, &(&1 + length(articles)))
+          |> update(:article_count, &(&1 + length(deduped)))
 
         {:noreply, socket}
 
@@ -143,9 +148,16 @@ defmodule LongOrShortWeb.MorningBriefLive do
              actor: socket.assigns.current_user
            ) do
         {:ok, loaded} ->
+          # Match the stream shape produced by `dedup_articles/1` —
+          # plain presentation map with `:ticker_symbols`. Cross-row
+          # collapse for live broadcasts is a V2 — for now the same
+          # multi-ticker article may arrive N times in quick
+          # succession; reload resolves it. (LON-153)
+          row = to_row(loaded, ticker_symbols_for(loaded))
+
           socket =
             socket
-            |> stream_insert(:articles, loaded, at: 0)
+            |> stream_insert(:articles, row, at: 0)
             |> update(:article_count, &(&1 + 1))
 
           {:noreply, socket}
@@ -247,8 +259,13 @@ defmodule LongOrShortWeb.MorningBriefLive do
             </p>
 
             <div class="flex items-center justify-between mt-2">
-              <div :if={article.ticker} class="flex gap-1">
-                <span class="badge badge-outline badge-sm">{article.ticker.symbol}</span>
+              <div :if={article.ticker_symbols != []} class="flex gap-1 flex-wrap">
+                <span
+                  :for={sym <- article.ticker_symbols}
+                  class="badge badge-outline badge-sm"
+                >
+                  {sym}
+                </span>
               </div>
               <a
                 :if={article.url}
@@ -346,11 +363,13 @@ defmodule LongOrShortWeb.MorningBriefLive do
            page: [limit: @page_limit]
          ) do
       {:ok, %Ash.Page.Keyset{results: articles, more?: more}} ->
+        deduped = dedup_articles(articles)
+
         socket
-        |> assign(:article_count, length(articles))
+        |> assign(:article_count, length(deduped))
         |> assign(:last_cursor, last_keyset(articles, nil))
         |> assign(:more?, more)
-        |> stream(:articles, articles, reset: true)
+        |> stream(:articles, deduped, reset: true)
 
       _ ->
         socket
@@ -359,6 +378,52 @@ defmodule LongOrShortWeb.MorningBriefLive do
         |> assign(:more?, false)
         |> stream(:articles, [], reset: true)
     end
+  end
+
+  # ── multi-ticker article dedup (LON-153) ──────────────────────
+  #
+  # Articles are stored per-ticker (dedup key `(source, external_id,
+  # symbol)`), so a single Benzinga/Alpaca headline that mentions 5
+  # tickers becomes 5 rows. For the Morning Brief / market-overview
+  # surfaces, that's visual noise — the trader sees the same headline
+  # repeated, which masks the actual `view_mode` filter behavior.
+  #
+  # We collapse rows that share `(source, external_id)` into one
+  # presentation map carrying a list of ticker symbols. Articles with
+  # a nil `external_id` are kept separate (no dedup key).
+  defp dedup_articles(articles) do
+    articles
+    |> Enum.group_by(&dedup_key/1)
+    |> Enum.map(fn {_key, group} -> collapse(group) end)
+    |> Enum.sort_by(& &1.id, :desc)
+  end
+
+  defp dedup_key(%{external_id: nil, id: id}), do: {:unique, id}
+  defp dedup_key(%{source: source, external_id: ext}), do: {source, ext}
+
+  defp collapse([single]), do: to_row(single, ticker_symbols_for(single))
+
+  defp collapse([_ | _] = group) do
+    # Use the *smallest* id as the canonical row — uuid_v7 is
+    # timestamp-ordered, so this is the first-inserted variant and
+    # gives a stable dom_id across reloads.
+    representative = Enum.min_by(group, & &1.id)
+
+    symbols =
+      group
+      |> Enum.flat_map(&ticker_symbols_for/1)
+      |> Enum.uniq()
+
+    to_row(representative, symbols)
+  end
+
+  defp ticker_symbols_for(%{ticker: %{symbol: s}}) when is_binary(s), do: [s]
+  defp ticker_symbols_for(_), do: []
+
+  defp to_row(article, ticker_symbols) do
+    article
+    |> Map.from_struct()
+    |> Map.put(:ticker_symbols, ticker_symbols)
   end
 
   defp build_args(socket) do
