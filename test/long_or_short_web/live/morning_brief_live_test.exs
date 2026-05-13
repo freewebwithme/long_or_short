@@ -253,4 +253,72 @@ defmodule LongOrShortWeb.MorningBriefLiveTest do
       assert html =~ "All Recent (24h)"
     end
   end
+
+  # ── LON-153: multi-ticker dedup ─────────────────────────────────
+
+  describe "article dedup (multi-ticker)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "collapses rows sharing (source, external_id) into one row with multiple ticker badges",
+         %{conn: conn} do
+      oklo = build_ticker(%{symbol: "OKLO"})
+      tsla = build_ticker(%{symbol: "TSLA"})
+      sndk = build_ticker(%{symbol: "SNDK"})
+
+      now = DateTime.add(DateTime.utc_now(), -60, :second)
+
+      shared = %{
+        title: "MULTI-TICKER-HEADLINE",
+        external_id: "ext-shared-42",
+        source: "alpaca",
+        published_at: now
+      }
+
+      build_article_for_ticker(oklo, shared)
+      build_article_for_ticker(tsla, shared)
+      build_article_for_ticker(sndk, shared)
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      # Single headline row, not 3
+      assert html =~ "MULTI-TICKER-HEADLINE"
+      occurrences = Regex.scan(~r/MULTI-TICKER-HEADLINE/, html) |> length()
+      assert occurrences == 1, "headline appeared #{occurrences} times, expected 1"
+
+      # All 3 ticker badges rendered
+      assert html =~ "OKLO"
+      assert html =~ "TSLA"
+      assert html =~ "SNDK"
+    end
+
+    test "same external_id but different sources stays as separate rows", %{conn: conn} do
+      t = build_ticker(%{symbol: "DIST"})
+
+      now = DateTime.add(DateTime.utc_now(), -60, :second)
+
+      build_article_for_ticker(t, %{
+        title: "ALPACA-HEAD",
+        external_id: "common-id-99",
+        source: "alpaca",
+        published_at: now
+      })
+
+      build_article_for_ticker(t, %{
+        title: "FINNHUB-HEAD",
+        external_id: "common-id-99",
+        source: "finnhub",
+        published_at: now
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      # Both source-specific rows visible
+      assert html =~ "ALPACA-HEAD"
+      assert html =~ "FINNHUB-HEAD"
+    end
+  end
 end
