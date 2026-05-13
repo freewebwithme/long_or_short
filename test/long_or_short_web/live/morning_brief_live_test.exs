@@ -134,4 +134,123 @@ defmodule LongOrShortWeb.MorningBriefLiveTest do
       refute render(view) =~ "Out-of-window stale headline"
     end
   end
+
+  # ── LON-152: Brief card ─────────────────────────────────────────
+
+  describe "brief card" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    defp et_today do
+      DateTime.utc_now()
+      |> DateTime.shift_zone!("America/New_York")
+      |> DateTime.to_date()
+    end
+
+    defp build_digest(overrides \\ %{}) do
+      attrs =
+        Map.merge(
+          %{
+            bucket_date: et_today(),
+            bucket: :premarket,
+            content: "# 시황 요약\n\n오늘 CPI 발표 후 시장 약세 [1].",
+            citations: [
+              %{
+                idx: 1,
+                url: "https://www.cnbc.com/x",
+                title: "CNBC X",
+                source: "cnbc.com",
+                cited_text: "snip",
+                accessed_at: DateTime.utc_now()
+              }
+            ],
+            llm_provider: :anthropic,
+            llm_model: "claude-haiku-4-5-20251001",
+            input_tokens: 1000,
+            output_tokens: 200,
+            search_calls: 1,
+            raw_response: %{"sample" => true}
+          },
+          overrides
+        )
+
+      {:ok, digest} = LongOrShort.Analysis.upsert_digest(attrs, authorize?: false)
+      digest
+    end
+
+    test "renders the fresh brief card with markdown + citations when today's digest exists",
+         %{conn: conn} do
+      build_digest()
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      # New brief-card surface
+      assert html =~ ~s|id="morning-brief-card"|
+      # Markdown rendered (the `#` heading turned into <h1>)
+      assert html =~ "시황 요약"
+      # Citations section
+      assert html =~ "Sources"
+      assert html =~ "cnbc.com"
+      assert html =~ "CNBC X"
+      # External-link confirm pattern reused
+      assert html =~ "외부 링크로 이동합니다"
+    end
+
+    test "clicking a bucket tab swaps the visible digest", %{conn: conn} do
+      build_digest(%{bucket: :overnight, content: "OVERNIGHT-UNIQUE-MARKER"})
+      build_digest(%{bucket: :premarket, content: "PREMARKET-UNIQUE-MARKER"})
+
+      {:ok, view, _html} = live(conn, ~p"/morning?view=all_recent")
+
+      html =
+        view
+        |> element("button[phx-click='select_bucket'][phx-value-bucket='overnight']")
+        |> render_click()
+
+      assert html =~ "OVERNIGHT-UNIQUE-MARKER"
+      refute html =~ "PREMARKET-UNIQUE-MARKER"
+    end
+
+    test "shows stale banner when today's bucket is missing but a prior digest exists",
+         %{conn: conn} do
+      yesterday = Date.add(et_today(), -1)
+      build_digest(%{bucket_date: yesterday, content: "STALE-FALLBACK-MARKER"})
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      assert html =~ "마지막 캐시"
+      assert html =~ "STALE-FALLBACK-MARKER"
+    end
+
+    test "shows empty state when no digest exists at all", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      assert html =~ "곧 준비됩니다"
+    end
+
+    test "regression: article list and view selector still render alongside the brief card",
+         %{conn: conn} do
+      ticker = build_ticker(%{symbol: "REGR"})
+
+      build_article_for_ticker(ticker, %{
+        title: "Regression article",
+        published_at: DateTime.add(DateTime.utc_now(), -60, :second)
+      })
+
+      build_digest()
+
+      {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
+
+      assert html =~ ~s|id="morning-brief-card"|
+      assert html =~ ~s|id="morning-articles"|
+      assert html =~ "Regression article"
+      assert html =~ "REGR"
+      # Existing view selector still present
+      assert html =~ "Premarket Brief"
+      assert html =~ "All Recent (24h)"
+    end
+  end
 end
