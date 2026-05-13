@@ -33,6 +33,7 @@ defmodule LongOrShortWeb.MorningBriefLive do
   alias LongOrShort.Analysis.MorningBriefDigest
   alias LongOrShort.News
   alias LongOrShort.Tickers
+  alias LongOrShortWeb.Live.ArticleDedup
   alias LongOrShortWeb.Live.MorningBrief.BriefCard
   alias LongOrShortWeb.MorningBrief.Bucket
 
@@ -120,7 +121,7 @@ defmodule LongOrShortWeb.MorningBriefLive do
         # Dedup within the batch only — cross-batch duplicates (same
         # external_id split across two pages) survive. Acceptable
         # tradeoff for V1 since pagination keyset is stable on raw id.
-        deduped = dedup_articles(articles)
+        deduped = ArticleDedup.dedup(articles)
 
         socket =
           deduped
@@ -148,12 +149,12 @@ defmodule LongOrShortWeb.MorningBriefLive do
              actor: socket.assigns.current_user
            ) do
         {:ok, loaded} ->
-          # Match the stream shape produced by `dedup_articles/1` —
+          # Match the stream shape produced by `ArticleDedup.dedup/1` —
           # plain presentation map with `:ticker_symbols`. Cross-row
           # collapse for live broadcasts is a V2 — for now the same
           # multi-ticker article may arrive N times in quick
-          # succession; reload resolves it. (LON-153)
-          row = to_row(loaded, ticker_symbols_for(loaded))
+          # succession; reload resolves it. (LON-153 / LON-157)
+          row = ArticleDedup.to_row(loaded)
 
           socket =
             socket
@@ -363,7 +364,7 @@ defmodule LongOrShortWeb.MorningBriefLive do
            page: [limit: @page_limit]
          ) do
       {:ok, %Ash.Page.Keyset{results: articles, more?: more}} ->
-        deduped = dedup_articles(articles)
+        deduped = ArticleDedup.dedup(articles)
 
         socket
         |> assign(:article_count, length(deduped))
@@ -378,63 +379,6 @@ defmodule LongOrShortWeb.MorningBriefLive do
         |> assign(:more?, false)
         |> stream(:articles, [], reset: true)
     end
-  end
-
-  # ── multi-ticker article dedup (LON-153) ──────────────────────
-  #
-  # Articles are stored per-ticker (dedup key `(source, external_id,
-  # symbol)`), so a single Benzinga/Alpaca headline that mentions 5
-  # tickers becomes 5 rows. For the Morning Brief / market-overview
-  # surfaces, that's visual noise — the trader sees the same headline
-  # repeated, which masks the actual `view_mode` filter behavior.
-  #
-  # We collapse rows that share `(source, external_id)` into one
-  # presentation map carrying a list of ticker symbols. Articles with
-  # a nil `external_id` are kept separate (no dedup key).
-  defp dedup_articles(articles) do
-    articles
-    |> Enum.group_by(&dedup_key/1)
-    |> Enum.map(fn {_key, group} -> collapse(group) end)
-    # Match the action's intended order (`published_at: :desc`,
-    # `id: :desc` tiebreak). LON-155: sorting by `id` alone surfaces
-    # recently-INGESTED-but-old articles above recently-PUBLISHED-
-    # but-earlier-ingested ones — looked like "filter broken" on
-    # tab switch because the trader sees old 2h-pub articles ahead
-    # of fresh 30min-pub ones.
-    #
-    # Two-pass to leverage Elixir's stable sort: id-desc first sets
-    # the tiebreak order, then published_at-desc wins on equal
-    # timestamps.
-    |> Enum.sort_by(& &1.id, :desc)
-    |> Enum.sort_by(& &1.published_at, {:desc, DateTime})
-  end
-
-  defp dedup_key(%{external_id: nil, id: id}), do: {:unique, id}
-  defp dedup_key(%{source: source, external_id: ext}), do: {source, ext}
-
-  defp collapse([single]), do: to_row(single, ticker_symbols_for(single))
-
-  defp collapse([_ | _] = group) do
-    # Use the *smallest* id as the canonical row — uuid_v7 is
-    # timestamp-ordered, so this is the first-inserted variant and
-    # gives a stable dom_id across reloads.
-    representative = Enum.min_by(group, & &1.id)
-
-    symbols =
-      group
-      |> Enum.flat_map(&ticker_symbols_for/1)
-      |> Enum.uniq()
-
-    to_row(representative, symbols)
-  end
-
-  defp ticker_symbols_for(%{ticker: %{symbol: s}}) when is_binary(s), do: [s]
-  defp ticker_symbols_for(_), do: []
-
-  defp to_row(article, ticker_symbols) do
-    article
-    |> Map.from_struct()
-    |> Map.put(:ticker_symbols, ticker_symbols)
   end
 
   defp build_args(socket) do
