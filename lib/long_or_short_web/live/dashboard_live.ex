@@ -30,6 +30,7 @@ defmodule LongOrShortWeb.DashboardLive do
   alias LongOrShort.{Analysis, Indices, News, Tickers}
   alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
+  alias LongOrShortWeb.Live.ArticleDedup
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
   alias LongOrShortWeb.MorningBrief.Bucket
@@ -145,7 +146,7 @@ defmodule LongOrShortWeb.DashboardLive do
       {:noreply,
        socket
        |> assign(:active_ticker, ticker)
-       |> assign(:active_news, articles)
+       |> assign(:active_news, ArticleDedup.dedup(articles))
        |> assign(:search_query, ticker.symbol)
        |> assign(:search_results, [])}
     else
@@ -175,14 +176,20 @@ defmodule LongOrShortWeb.DashboardLive do
       {:ok, article} ->
         Analysis.Events.subscribe_for_article(article.id)
 
+        # Convert to ArticleDedup row shape so the assigns lists stay
+        # uniform after initial dedup'd load. Cross-row collapse for
+        # live broadcasts is V2 (LON-157) — a multi-ticker article
+        # arriving as N PubSub events appears as N rows until reload.
+        row = ArticleDedup.to_row(article)
+
         news =
-          [article | socket.assigns.news]
+          [row | socket.assigns.news]
           |> sort_by_published()
           |> Enum.take(@news_limit)
 
         watchlist_news =
           if MapSet.member?(socket.assigns.watchlist_ticker_ids, article.ticker_id) do
-            [article | socket.assigns.watchlist_news]
+            [row | socket.assigns.watchlist_news]
             |> sort_by_published()
             |> Enum.take(@news_limit)
           else
@@ -190,7 +197,7 @@ defmodule LongOrShortWeb.DashboardLive do
           end
 
         morning_brief_preview =
-          [article | socket.assigns.morning_brief_preview]
+          [row | socket.assigns.morning_brief_preview]
           |> sort_by_published()
           |> Enum.take(@news_limit)
 
@@ -427,9 +434,21 @@ defmodule LongOrShortWeb.DashboardLive do
           <span class="flex-1 min-w-0 truncate">
             {article.title}
           </span>
-          <span :if={article.ticker} class="badge badge-outline badge-sm shrink-0">
-            {article.ticker.symbol}
-          </span>
+          <div :if={preview_ticker_symbols(article) != []} class="flex gap-1 shrink-0">
+            <span
+              :for={sym <- Enum.take(preview_ticker_symbols(article), 2)}
+              class="badge badge-outline badge-sm"
+            >
+              {sym}
+            </span>
+            <span
+              :if={length(preview_ticker_symbols(article)) > 2}
+              class="badge badge-ghost badge-sm"
+              title={Enum.join(Enum.drop(preview_ticker_symbols(article), 2), ", ")}
+            >
+              +{length(preview_ticker_symbols(article)) - 2}
+            </span>
+          </div>
           <a
             :if={article.url}
             href={article.url}
@@ -579,8 +598,11 @@ defmodule LongOrShortWeb.DashboardLive do
            actor: actor,
            page: [limit: @news_limit]
          ) do
-      {:ok, %Ash.Page.Keyset{results: articles}} -> sort_by_published(articles)
-      _ -> []
+      {:ok, %Ash.Page.Keyset{results: articles}} ->
+        articles |> ArticleDedup.dedup() |> Enum.take(@news_limit)
+
+      _ ->
+        []
     end
   end
 
@@ -592,8 +614,11 @@ defmodule LongOrShortWeb.DashboardLive do
              load: [:ticker, :news_analysis],
              actor: actor
            ) do
-        {:ok, articles} -> sort_by_published(articles)
-        _ -> []
+        {:ok, articles} ->
+          articles |> ArticleDedup.dedup() |> Enum.take(@news_limit)
+
+        _ ->
+          []
       end
     end
   end
@@ -609,7 +634,9 @@ defmodule LongOrShortWeb.DashboardLive do
            actor: actor,
            page: [limit: @news_limit]
          ) do
-      {:ok, %Ash.Page.Keyset{results: articles}} -> articles
+      {:ok, %Ash.Page.Keyset{results: articles}} ->
+        articles |> ArticleDedup.dedup() |> Enum.take(@news_limit)
+
       _ -> []
     end
   end
@@ -639,10 +666,34 @@ defmodule LongOrShortWeb.DashboardLive do
     )
   end
 
+  # Same fallback shape as ArticleComponents — accept both deduped
+  # presentation maps (`:ticker_symbols` list) and raw Article structs
+  # (single ticker via `:ticker` association).
+  defp preview_ticker_symbols(article) do
+    case Map.get(article, :ticker_symbols) do
+      list when is_list(list) ->
+        list
+
+      _ ->
+        case article do
+          %{ticker: %{symbol: s}} when is_binary(s) -> [s]
+          _ -> []
+        end
+    end
+  end
+
   defp replace_in_list(list, id, article) do
+    new_row = ArticleDedup.to_row(article)
+
     Enum.map(list, fn
-      %{id: ^id} -> article
-      other -> other
+      %{id: ^id} = existing ->
+        # Preserve the existing row's multi-ticker symbols. The fresh
+        # article only knows about its own ticker, so a naive replace
+        # would shrink a `[A, B, C]` row down to `[A]`.
+        Map.put(new_row, :ticker_symbols, Map.get(existing, :ticker_symbols, new_row.ticker_symbols))
+
+      other ->
+        other
     end)
   end
 

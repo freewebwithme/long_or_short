@@ -44,6 +44,8 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
   attr :context, :string, default: "card"
 
   def article_card(assigns) do
+    assigns = assign(assigns, :ticker_symbols, ticker_symbols_for(assigns.article))
+
     ~H"""
     <div class="border border-base-300 rounded p-3 bg-base-200 shadow-sm">
       <div class="flex gap-3 items-start">
@@ -54,13 +56,27 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
         </div>
 
         <div class="w-20 flex-shrink-0">
-          <div class="font-bold">{@article.ticker.symbol}</div>
-          <.price_label
-            id={"price-#{@context}-#{@article.id}"}
-            symbol={@article.ticker.symbol}
-            initial_price={@article.ticker.last_price}
-            class="text-xs opacity-60"
-          />
+          <%= case @ticker_symbols do %>
+            <% [single] -> %>
+              <div class="font-bold">{single}</div>
+              <.price_label
+                id={"price-#{@context}-#{@article.id}"}
+                symbol={single}
+                initial_price={ticker_last_price(@article)}
+                class="text-xs opacity-60"
+              />
+            <% [] -> %>
+              <span class="text-xs opacity-50 italic">—</span>
+            <% multi -> %>
+              <div class="flex flex-wrap gap-1">
+                <span
+                  :for={sym <- multi}
+                  class="badge badge-outline badge-xs"
+                >
+                  {sym}
+                </span>
+              </div>
+          <% end %>
         </div>
 
         <div class="flex-grow">{@article.title}</div>
@@ -189,4 +205,28 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
     </script>
     """
   end
+
+  # ── multi-ticker article helpers (LON-157) ──────────────────────
+  #
+  # The card accepts both raw Article structs (single ticker via the
+  # `:ticker` association) and `ArticleDedup`-produced presentation
+  # maps (carrying an explicit `:ticker_symbols` list). The former
+  # path is for callers that haven't migrated yet; new callers should
+  # always pass deduped maps so multi-ticker headlines collapse.
+
+  defp ticker_symbols_for(article) do
+    case Map.get(article, :ticker_symbols) do
+      list when is_list(list) ->
+        list
+
+      _ ->
+        case article do
+          %{ticker: %{symbol: s}} when is_binary(s) -> [s]
+          _ -> []
+        end
+    end
+  end
+
+  defp ticker_last_price(%{ticker: %{last_price: p}}), do: p
+  defp ticker_last_price(_), do: nil
 end

@@ -36,6 +36,7 @@ defmodule LongOrShortWeb.FeedLive do
   use LongOrShortWeb, :live_view
 
   alias LongOrShortWeb.Format
+  alias LongOrShortWeb.Live.ArticleDedup
   alias LongOrShortWeb.Live.Components.{ArticleComponents, TickerAutocomplete}
   alias LongOrShort.{Analysis, News, Tickers}
 
@@ -85,10 +86,13 @@ defmodule LongOrShortWeb.FeedLive do
         {:ok, article} ->
           LongOrShortWeb.Live.AsyncAnalysis.spawn_analyzer(article, actor, self())
 
+          # Single-article update: ticker_symbols list shrinks to just
+          # this article's ticker. Multi-ticker rows lose their other
+          # badges on refresh — V2 to preserve via cache (LON-157).
           socket =
             socket
             |> update(:analyzing_ids, &MapSet.put(&1, article_id))
-            |> stream_insert(:articles, article)
+            |> stream_insert(:articles, ArticleDedup.to_row(article))
 
           {:noreply, socket}
 
@@ -192,14 +196,16 @@ defmodule LongOrShortWeb.FeedLive do
           for article <- articles, do: Analysis.Events.subscribe_for_article(article.id)
         end
 
+        deduped = ArticleDedup.dedup(articles)
+
         socket =
-          articles
-          |> Enum.reduce(socket, fn article, sock ->
-            stream_insert(sock, :articles, article, at: -1)
+          deduped
+          |> Enum.reduce(socket, fn row, sock ->
+            stream_insert(sock, :articles, row, at: -1)
           end)
           |> assign(:last_cursor, last_keyset(articles, socket.assigns.last_cursor))
           |> assign(:more?, more)
-          |> update(:article_count, &(&1 + length(articles)))
+          |> update(:article_count, &(&1 + length(deduped)))
 
         {:noreply, socket}
 
@@ -227,7 +233,7 @@ defmodule LongOrShortWeb.FeedLive do
 
           socket =
             socket
-            |> stream_insert(:articles, article, at: 0)
+            |> stream_insert(:articles, ArticleDedup.to_row(article), at: 0)
             |> update(:article_count, &(&1 + 1))
 
           {:noreply, socket}
@@ -382,11 +388,13 @@ defmodule LongOrShortWeb.FeedLive do
       for article <- articles, do: Analysis.Events.subscribe_for_article(article.id)
     end
 
+    deduped = ArticleDedup.dedup(articles)
+
     socket
-    |> assign(:article_count, length(articles))
+    |> assign(:article_count, length(deduped))
     |> assign(:last_cursor, last_keyset(articles, nil))
     |> assign(:more?, more)
-    |> stream(:articles, articles, reset: true)
+    |> stream(:articles, deduped, reset: true)
   end
 
   defp filter_to_args(filter) do
@@ -413,7 +421,7 @@ defmodule LongOrShortWeb.FeedLive do
            load: [:ticker, :news_analysis],
            actor: socket.assigns.current_user
          ) do
-      {:ok, article} -> stream_insert(socket, :articles, article)
+      {:ok, article} -> stream_insert(socket, :articles, ArticleDedup.to_row(article))
       {:error, _} -> socket
     end
   end
