@@ -129,40 +129,54 @@ defmodule LongOrShortWeb.MorningBrief.BucketTest do
     end
   end
 
-  describe "view_window/2" do
-    test ":premarket_brief starts prev-day 16:00 ET" do
-      now = ~U[2026-05-11 13:00:00Z]
+  describe "view_window/2 — bucket-aligned (LON-156)" do
+    # All `now` values below are during EDT (UTC-4) in May, so
+    # ET-to-UTC offset is +4 hours.
+
+    test ":premarket_brief = today 04:00–09:30 ET" do
+      now = ~U[2026-05-11 16:00:00Z]
       {since, until} = Bucket.view_window(:premarket_brief, now)
-      assert since == ~U[2026-05-10 20:00:00Z]
-      assert until == now
+      # 04:00 EDT = 08:00 UTC, 09:30 EDT = 13:30 UTC
+      assert since == ~U[2026-05-11 08:00:00Z]
+      assert until == ~U[2026-05-11 13:30:00Z]
     end
 
-    test ":opening is the last 60 minutes" do
-      now = ~U[2026-05-11 13:30:00Z]
+    test ":opening = today 09:30–10:30 ET" do
+      now = ~U[2026-05-11 16:00:00Z]
       {since, until} = Bucket.view_window(:opening, now)
-      assert DateTime.diff(until, since, :second) == 3600
-      assert until == now
+      assert since == ~U[2026-05-11 13:30:00Z]
+      assert until == ~U[2026-05-11 14:30:00Z]
     end
 
-    test ":intraday is the last 4 hours" do
-      now = ~U[2026-05-11 15:00:00Z]
+    test ":intraday = today 10:30–16:00 ET" do
+      now = ~U[2026-05-11 16:00:00Z]
       {since, until} = Bucket.view_window(:intraday, now)
-      assert DateTime.diff(until, since, :second) == 4 * 3600
-      assert until == now
+      assert since == ~U[2026-05-11 14:30:00Z]
+      assert until == ~U[2026-05-11 20:00:00Z]
     end
 
-    test ":afterhours starts today 16:00 ET" do
+    test ":afterhours = today 16:00–20:00 ET" do
       now = ~U[2026-05-11 22:00:00Z]
       {since, until} = Bucket.view_window(:afterhours, now)
       assert since == ~U[2026-05-11 20:00:00Z]
-      assert until == now
+      assert until == ~U[2026-05-12 00:00:00Z]
     end
 
-    test ":all_recent is the last 24 hours" do
+    test ":all_recent stays sliding (last 24h)" do
       now = ~U[2026-05-11 13:00:00Z]
       {since, until} = Bucket.view_window(:all_recent, now)
       assert DateTime.diff(until, since, :second) == 24 * 3600
       assert until == now
+    end
+
+    test "windows produced are anchored on today's ET calendar date" do
+      # 03:00 UTC = 23:00 ET prev day (May 10). So `today` in ET = May 10.
+      now = ~U[2026-05-11 03:00:00Z]
+      {since, until} = Bucket.view_window(:premarket_brief, now)
+      # premarket_brief on May 10's ET calendar = May 10 04:00-09:30 ET
+      # = May 10 08:00–13:30 UTC
+      assert since == ~U[2026-05-10 08:00:00Z]
+      assert until == ~U[2026-05-10 13:30:00Z]
     end
   end
 
