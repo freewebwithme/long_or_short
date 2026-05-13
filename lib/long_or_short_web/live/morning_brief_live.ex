@@ -438,16 +438,14 @@ defmodule LongOrShortWeb.MorningBriefLive do
   end
 
   defp build_args(socket) do
-    # We only send `:since` to the DB query — Postgres/Ash filter
-    # comparisons against a runtime DateTime variable returned 0 rows
-    # during initial wiring (root cause: still under investigation,
-    # likely a microsecond/cast quirk). `:until` is enforced
-    # client-side in `matches_view?/2` for PubSub deliveries instead,
-    # which is sufficient because feeders never publish future-dated
-    # articles in practice.
-    {since, _until} = Bucket.view_window(socket.assigns.view_mode)
+    # LON-156: send both `:since` and `:until` so narrow ET buckets
+    # (e.g. `:premarket_brief` = 04:00–09:30 ET) actually exclude
+    # later-in-day articles. Used to skip `:until` here because
+    # LON-154's session-TZ bug made the comparison drop rows; with
+    # that fixed the closed window works as designed.
+    {since, until} = Bucket.view_window(socket.assigns.view_mode)
 
-    args = %{since: since}
+    args = %{since: since, until: until}
 
     case socket.assigns.focus do
       :watchlist -> Map.put(args, :ticker_ids, socket.assigns.watchlist_ticker_ids)

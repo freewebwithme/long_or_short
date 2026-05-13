@@ -95,41 +95,51 @@ defmodule LongOrShortWeb.MorningBrief.Bucket do
   Returns `{since_utc, until_utc}` describing the time window the
   given view should fetch articles for.
 
-  | Mode               | Window                              |
-  |--------------------|-------------------------------------|
-  | `:premarket_brief` | prev-day 16:00 ET → now             |
-  | `:opening`         | last 60 minutes                     |
-  | `:intraday`        | last 4 hours                        |
-  | `:afterhours`      | today 16:00 ET → now                |
-  | `:all_recent`      | last 24 hours                       |
+  The four trading-session windows are aligned with the article-side
+  `bucket_for/2` bucket boundaries (LON-156), so a tab labeled
+  "Premarket Brief" returns exactly the articles whose row badge is
+  "Premarket". Each is a fixed ET wall-clock window on today's ET
+  calendar date; clicking a tab when the wall-clock is outside its
+  window returns 0 articles (the trader should pick a different tab
+  or `:all_recent` for a sliding view).
+
+  | Mode               | Window                       |
+  |--------------------|------------------------------|
+  | `:premarket_brief` | today 04:00 → 09:30 ET       |
+  | `:opening`         | today 09:30 → 10:30 ET       |
+  | `:intraday`        | today 10:30 → 16:00 ET       |
+  | `:afterhours`      | today 16:00 → 20:00 ET       |
+  | `:all_recent`      | last 24 hours (sliding)      |
   """
   @spec view_window(view_mode(), DateTime.t()) :: {DateTime.t(), DateTime.t()}
   def view_window(view_mode, now \\ DateTime.utc_now())
 
   def view_window(:premarket_brief, %DateTime{} = now) do
-    et_now = DateTime.shift_zone!(now, @et_zone)
-    today = DateTime.to_date(et_now)
-    since = et_at(Date.add(today, -1), 16, 0) |> DateTime.shift_zone!("Etc/UTC")
-    {since, now}
+    bucket_window(now, {4, 0}, {9, 30})
   end
 
   def view_window(:opening, %DateTime{} = now) do
-    {DateTime.add(now, -60 * 60, :second), now}
+    bucket_window(now, {9, 30}, {10, 30})
   end
 
   def view_window(:intraday, %DateTime{} = now) do
-    {DateTime.add(now, -4 * 3600, :second), now}
+    bucket_window(now, {10, 30}, {16, 0})
   end
 
   def view_window(:afterhours, %DateTime{} = now) do
-    et_now = DateTime.shift_zone!(now, @et_zone)
-    today = DateTime.to_date(et_now)
-    since = et_at(today, 16, 0) |> DateTime.shift_zone!("Etc/UTC")
-    {since, now}
+    bucket_window(now, {16, 0}, {20, 0})
   end
 
   def view_window(:all_recent, %DateTime{} = now) do
     {DateTime.add(now, -24 * 3600, :second), now}
+  end
+
+  defp bucket_window(%DateTime{} = now, {sh, sm}, {uh, um}) do
+    et_now = DateTime.shift_zone!(now, @et_zone)
+    today = DateTime.to_date(et_now)
+    since = et_at(today, sh, sm) |> DateTime.shift_zone!("Etc/UTC")
+    until = et_at(today, uh, um) |> DateTime.shift_zone!("Etc/UTC")
+    {since, until}
   end
 
   # ── helpers ────────────────────────────────────────────────────
