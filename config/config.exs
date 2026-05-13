@@ -245,7 +245,10 @@ config :long_or_short, LongOrShort.AI.Providers.Claude,
   model: "claude-sonnet-4-6",
   max_tokens: 4096,
   base_url: "https://api.anthropic.com",
-  anthropic_version: "2023-06-01"
+  anthropic_version: "2023-06-01",
+  # Anthropic's web_search tool is version-dated; bump here when they
+  # release a newer revision (LON-150).
+  web_search_tool_version: "web_search_20250305"
 
 # Qwen / DashScope provider defaults (LON-104). Region-specific base
 # URLs — `runtime.exs` selects which one is active via `QWEN_REGION`.

@@ -607,4 +607,241 @@ defmodule LongOrShort.AI.Providers.ClaudeTest do
              "expected cache_read_input_tokens > 0 on second call, got: #{inspect(usage2)}"
     end
   end
+
+  # ─── call_with_search/3 (LON-150) ─────────────────────────────────
+
+  defp empty_search_response do
+    %{
+      "content" => [%{"type" => "text", "text" => "ok"}],
+      "usage" => %{
+        "input_tokens" => 100,
+        "output_tokens" => 50,
+        "server_tool_use" => %{"web_search_requests" => 0}
+      }
+    }
+  end
+
+  describe "call_with_search/3 — request shape" do
+    test "POSTs to /v1/messages with the web_search tool block" do
+      stub(fn conn ->
+        assert conn.method == "POST"
+        assert conn.request_path == "/v1/messages"
+        assert Plug.Conn.get_req_header(conn, "x-api-key") == ["test-key"]
+        assert Plug.Conn.get_req_header(conn, "anthropic-version") == ["2023-06-01"]
+
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["model"] == "claude-sonnet-4-6"
+        assert body["max_tokens"] == 4096
+        assert body["messages"] == [%{"role" => "user", "content" => "hi"}]
+        # web_search is server-side; no tool_choice negotiation
+        refute Map.has_key?(body, "tool_choice")
+
+        [tool] = body["tools"]
+        assert tool["type"] == "web_search_20250305"
+        assert tool["name"] == "web_search"
+        assert tool["max_uses"] == 5
+        # server tools may not accept cache_control — verify we skip it
+        refute Map.has_key?(tool, "cache_control")
+
+        Req.Test.json(conn, empty_search_response())
+      end)
+
+      assert {:ok, _} = Claude.call_with_search(@messages)
+    end
+
+    test "opts override max_uses and model" do
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["model"] == "claude-haiku-4-5-20251001"
+        [tool] = body["tools"]
+        assert tool["max_uses"] == 3
+
+        Req.Test.json(conn, empty_search_response())
+      end)
+
+      Claude.call_with_search(@messages,
+        model: "claude-haiku-4-5-20251001",
+        max_uses: 3
+      )
+    end
+
+    test "system block is cache-tagged; web_search tool is not" do
+      messages = [
+        %{role: "system", content: "Market analyst persona."},
+        %{role: "user", content: "Brief me."}
+      ]
+
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+
+        assert body["system"] == [
+                 %{
+                   "type" => "text",
+                   "text" => "Market analyst persona.",
+                   "cache_control" => %{"type" => "ephemeral"}
+                 }
+               ]
+
+        [tool] = body["tools"]
+        refute Map.has_key?(tool, "cache_control")
+
+        Req.Test.json(conn, empty_search_response())
+      end)
+
+      Claude.call_with_search(messages)
+    end
+
+    test "tool type is read from config (forward-compat bumps)" do
+      prior = Application.get_env(:long_or_short, LongOrShort.AI.Providers.Claude)
+
+      Application.put_env(
+        :long_or_short,
+        LongOrShort.AI.Providers.Claude,
+        Keyword.put(prior, :web_search_tool_version, "web_search_20991231")
+      )
+
+      on_exit(fn ->
+        Application.put_env(:long_or_short, LongOrShort.AI.Providers.Claude, prior)
+      end)
+
+      stub(fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+        [tool] = body["tools"]
+        assert tool["type"] == "web_search_20991231"
+
+        Req.Test.json(conn, empty_search_response())
+      end)
+
+      Claude.call_with_search(@messages)
+    end
+  end
+
+  describe "call_with_search/3 — response normalization" do
+    test "concatenates text blocks and drops server_tool_use / web_search_tool_result" do
+      stub(fn conn ->
+        Req.Test.json(conn, %{
+          "content" => [
+            %{"type" => "text", "text" => "Intro. "},
+            %{
+              "type" => "server_tool_use",
+              "id" => "s1",
+              "name" => "web_search",
+              "input" => %{"query" => "q"}
+            },
+            %{"type" => "web_search_tool_result", "tool_use_id" => "s1", "content" => []},
+            %{"type" => "text", "text" => "Body. "},
+            %{"type" => "text", "text" => "Tail."}
+          ],
+          "usage" => %{
+            "input_tokens" => 100,
+            "output_tokens" => 50,
+            "server_tool_use" => %{"web_search_requests" => 1}
+          }
+        })
+      end)
+
+      assert {:ok, %{text: "Intro. Body. Tail.", citations: [], search_calls: 1}} =
+               Claude.call_with_search(@messages)
+    end
+
+    test "extracts citations across text blocks, dedupes by URL, assigns sequential indices" do
+      stub(fn conn ->
+        Req.Test.json(conn, %{
+          "content" => [
+            %{
+              "type" => "text",
+              "text" => "First [1].",
+              "citations" => [
+                %{
+                  "type" => "web_search_result_location",
+                  "url" => "https://www.cnbc.com/a",
+                  "title" => "CNBC A",
+                  "cited_text" => "snippet a",
+                  "encrypted_index" => "ignore-me"
+                }
+              ]
+            },
+            %{
+              "type" => "text",
+              "text" => " Second [2].",
+              "citations" => [
+                %{
+                  "type" => "web_search_result_location",
+                  "url" => "https://stockanalysis.com/x",
+                  "title" => "SA X",
+                  "cited_text" => "snippet x"
+                },
+                # Dup of first URL — must dedupe by url, keep first occurrence
+                %{
+                  "type" => "web_search_result_location",
+                  "url" => "https://www.cnbc.com/a",
+                  "title" => "CNBC A (dup)",
+                  "cited_text" => "ignored"
+                }
+              ]
+            }
+          ],
+          "usage" => %{
+            "input_tokens" => 100,
+            "output_tokens" => 50,
+            "server_tool_use" => %{"web_search_requests" => 2}
+          }
+        })
+      end)
+
+      assert {:ok, %{citations: [c1, c2]}} = Claude.call_with_search(@messages)
+
+      assert c1.idx == 1
+      assert c1.url == "https://www.cnbc.com/a"
+      assert c1.title == "CNBC A"
+      assert c1.source == "cnbc.com"
+      assert c1.cited_text == "snippet a"
+      assert %DateTime{} = c1.accessed_at
+      refute Map.has_key?(c1, :encrypted_index)
+
+      assert c2.idx == 2
+      assert c2.url == "https://stockanalysis.com/x"
+      assert c2.source == "stockanalysis.com"
+    end
+
+    test "returns empty citations and nil text when the response is bare" do
+      stub(fn conn ->
+        Req.Test.json(conn, %{
+          "content" => [],
+          "usage" => %{
+            "input_tokens" => 10,
+            "output_tokens" => 0,
+            "server_tool_use" => %{"web_search_requests" => 0}
+          }
+        })
+      end)
+
+      assert {:ok, %{text: nil, citations: [], search_calls: 0}} =
+               Claude.call_with_search(@messages)
+    end
+
+    test "exposes web_search_requests in the usage map" do
+      stub(fn conn ->
+        Req.Test.json(conn, %{
+          "content" => [%{"type" => "text", "text" => "hi"}],
+          "usage" => %{
+            "input_tokens" => 100,
+            "output_tokens" => 50,
+            "server_tool_use" => %{"web_search_requests" => 4}
+          }
+        })
+      end)
+
+      assert {:ok, %{usage: usage, search_calls: 4}} =
+               Claude.call_with_search(@messages)
+
+      assert usage.web_search_requests == 4
+    end
+  end
 end

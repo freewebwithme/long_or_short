@@ -116,6 +116,45 @@ defmodule LongOrShort.AI.Providers.Claude do
     end
   end
 
+  @doc """
+  Call the Messages API with Anthropic's built-in `web_search` tool
+  enabled, returning a citation-preserving response shape.
+
+  Unlike `call/3`, this entry point is web-search-specific and is **not**
+  part of the `LongOrShort.AI.Provider` behaviour. Used by the Morning
+  Brief generator (LON-151), which needs URLs/titles of every source the
+  model consulted — information the standard `call/3` normalizer drops.
+
+  ## Opts
+    * `:model` — overrides the configured default. Pass
+      `"claude-haiku-4-5-20251001"` for the Morning Brief Phase 1 default
+      (cost-tuned), or `"claude-sonnet-4-6"` for the LON-149 escape.
+    * `:max_tokens` — output cap (default from config)
+    * `:max_uses` — server-side cap on `web_search` invocations per turn.
+      Anthropic enforces this; we default to 5. Reducing this is the
+      primary lever for keeping per-brief input-token usage in check.
+
+  ## Returns
+
+      {:ok, %{
+        text: String.t() | nil,                # concatenated narrative
+        citations: [%{idx, url, title, source, cited_text, accessed_at}],
+        usage: %{...},                         # standard usage + :web_search_requests
+        search_calls: non_neg_integer()        # convenience copy
+      }}
+
+  Errors mirror `call/3`'s shape — see module doc.
+  """
+  @spec call_with_search([map()], keyword()) :: {:ok, map()} | {:error, term()}
+  def call_with_search(messages, opts \\ []) do
+    with {:ok, key} <- api_key(),
+         body = build_search_body(messages, opts),
+         {:ok, response} <- ProviderHelper.post(client(key), @path, body),
+         {:ok, response_body} <- ProviderHelper.dispatch(response) do
+      normalize_search(response_body)
+    end
+  end
+
   # ─── HTTP ──────────────────────────────────────────────────────────
 
   defp client(api_key) do
@@ -238,6 +277,137 @@ defmodule LongOrShort.AI.Providers.Claude do
     case Application.fetch_env(:long_or_short, :anthropic_api_key) do
       {:ok, key} when is_binary(key) and key != "" -> {:ok, key}
       _ -> {:error, :no_api_key}
+    end
+  end
+
+  # ─── Web search variant (LON-150) ─────────────────────────────────
+  #
+  # Web search uses a server-side tool that takes a different request
+  # shape than function tools — `%{type: "web_search_20250305", ...}`
+  # rather than `%{name, description, input_schema}`. It also returns a
+  # richer content stream (interleaved `text` / `server_tool_use` /
+  # `web_search_tool_result` blocks) with citations embedded inside
+  # `text` blocks. Keeping this path separate avoids contaminating the
+  # `call/3` flow that NewsAnalysis depends on.
+
+  defp build_search_body(messages, opts) do
+    config = config()
+    {system, chat_messages} = extract_system(messages)
+
+    base = %{
+      model: Keyword.get(opts, :model) || Keyword.fetch!(config, :model),
+      max_tokens: Keyword.get(opts, :max_tokens) || Keyword.fetch!(config, :max_tokens),
+      messages: chat_messages,
+      tools: [web_search_tool(opts)]
+    }
+
+    case system do
+      nil -> base
+      text -> Map.put(base, :system, system_blocks(text))
+    end
+  end
+
+  # Server tools may not accept `cache_control`, so we deliberately skip
+  # `mark_last_cacheable/1` here. The system block still carries an
+  # ephemeral cache marker via `system_blocks/1`, but cron schedules sit
+  # > 5min apart so practical hit rate is low anyway.
+  #
+  # The tool type is version-dated by Anthropic — see
+  # `:web_search_tool_version` in `config/config.exs` to bump when a
+  # newer revision ships.
+  defp web_search_tool(opts) do
+    %{
+      type: Keyword.fetch!(config(), :web_search_tool_version),
+      name: "web_search",
+      max_uses: Keyword.get(opts, :max_uses, 5)
+    }
+  end
+
+  defp normalize_search(%{"content" => content} = body) when is_list(content) do
+    text = extract_search_text(content)
+    citations = extract_citations(content)
+    base_usage = ProviderHelper.usage_map(body, include_cache: true)
+    search_calls = get_in(body, ["usage", "server_tool_use", "web_search_requests"]) || 0
+    usage = Map.put(base_usage, :web_search_requests, search_calls)
+
+    :telemetry.execute(
+      [:long_or_short, :ai, :claude, :call_with_search],
+      Map.put(usage, :search_calls, search_calls),
+      %{}
+    )
+
+    {:ok,
+     %{
+       text: text,
+       citations: citations,
+       usage: usage,
+       search_calls: search_calls
+     }}
+  end
+
+  defp normalize_search(body), do: {:error, {:invalid_response, body}}
+
+  # Narrative is the concatenation of every `text` block in order. The
+  # `server_tool_use` and `web_search_tool_result` blocks contribute no
+  # reader-facing prose — drop them. `[1] [2]` markers added by the model
+  # remain inline as it wrote them.
+  defp extract_search_text(content) do
+    text =
+      content
+      |> Stream.filter(&match?(%{"type" => "text"}, &1))
+      |> Enum.map_join("", & &1["text"])
+
+    if text == "", do: nil, else: text
+  end
+
+  # Flatten the per-text-block citations into a deduped, sequentially
+  # indexed list. Each raw entry is a `web_search_result_location` with
+  # `url / title / cited_text / encrypted_index`; we keep the trader-
+  # facing fields, derive a compact `source` from the host, and discard
+  # `encrypted_index` (Anthropic-internal pointer).
+  defp extract_citations(content) do
+    now = DateTime.utc_now()
+
+    {entries, _seen} =
+      content
+      |> Stream.filter(&match?(%{"type" => "text"}, &1))
+      |> Stream.flat_map(fn block -> List.wrap(block["citations"]) end)
+      |> Enum.reduce({[], MapSet.new()}, fn raw, {acc, seen} ->
+        url = raw["url"]
+
+        cond do
+          is_nil(url) ->
+            {acc, seen}
+
+          MapSet.member?(seen, url) ->
+            {acc, seen}
+
+          true ->
+            entry = %{
+              url: url,
+              title: raw["title"],
+              source: derive_source(url),
+              cited_text: raw["cited_text"],
+              accessed_at: now
+            }
+
+            {[entry | acc], MapSet.put(seen, url)}
+        end
+      end)
+
+    entries
+    |> Enum.reverse()
+    |> Enum.with_index(1)
+    |> Enum.map(fn {entry, idx} -> Map.put(entry, :idx, idx) end)
+  end
+
+  defp derive_source(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) ->
+        host |> String.replace_prefix("www.", "")
+
+      _ ->
+        nil
     end
   end
 end
