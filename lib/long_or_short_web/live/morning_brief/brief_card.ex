@@ -7,7 +7,7 @@ defmodule LongOrShortWeb.Live.MorningBrief.BriefCard do
 
     * `brief_card/1` — outer container, dispatches on status
     * `bucket_tabs/1` — overnight / premarket / after_open selector
-    * `freshness_indicator/1` — "Generated N분 전" + bucket date
+    * `freshness_indicator/1` — relative-time label ("12m ago") + bucket date
     * `citations_section/1` — Sources list with external-link confirm
     * `stale_banner/1` — gray "오늘 브리프 미준비" notice + fallback
     * `empty_state/1` — "곧 준비됩니다" zero-cache state
@@ -149,10 +149,9 @@ defmodule LongOrShortWeb.Live.MorningBrief.BriefCard do
     <div class="alert alert-warning text-xs mb-3">
       <.icon name="hero-clock" class="size-4 shrink-0" />
       <span>
-        오늘 <strong>{bucket_display(@bucket)}</strong>
-        브리프 아직 준비 안 됨. 마지막 캐시
-        ({Date.to_string(@digest.bucket_date)} {bucket_display(@digest.bucket)})
-        를 표시 중입니다. 다음 cron 시각에 새로 생성됩니다.
+        Today's <strong>{bucket_display(@bucket)}</strong>
+        brief isn't ready yet — scheduled for {bucket_eta(@bucket)}.
+        (Last cached: {Date.to_string(@digest.bucket_date)} {bucket_display(@digest.bucket)})
       </span>
     </div>
     """
@@ -163,10 +162,10 @@ defmodule LongOrShortWeb.Live.MorningBrief.BriefCard do
   def empty_state(assigns) do
     ~H"""
     <div class="text-center py-8 opacity-70">
-      <p class="mb-2">📰 곧 준비됩니다.</p>
+      <p class="mb-2">📰 Brief is on the way.</p>
       <p class="text-xs opacity-80">
-        시스템 cron 이 매일 ET 05:00 / 08:45 / 10:15 에 브리프를 생성합니다.
-        아래 기사 리스트에서 최신 뉴스를 확인하세요.
+        Briefs are generated daily at 05:00 / 08:45 / 10:15 ET.
+        Check the article list below for the latest news.
       </p>
     </div>
     """
@@ -201,6 +200,12 @@ defmodule LongOrShortWeb.Live.MorningBrief.BriefCard do
   defp bucket_display(:premarket), do: "Premarket"
   defp bucket_display(:after_open), do: "After Open"
 
+  # Bucket → user-facing ETA copy. Mirrors the schedule in
+  # `LongOrShort.MorningBrief.CronWorker` (05:00 / 08:45 / 10:15 ET).
+  defp bucket_eta(:overnight), do: "5:00 ET"
+  defp bucket_eta(:premarket), do: "8:45 ET"
+  defp bucket_eta(:after_open), do: "10:15 ET"
+
   # Citations come from a jsonb column → string keys after Jason
   # round-trip on read. Tests/fixtures may pass atom keys. Try atom
   # first, fall back to string. Covers both shapes without a
@@ -216,10 +221,10 @@ defmodule LongOrShortWeb.Live.MorningBrief.BriefCard do
     seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
 
     cond do
-      seconds < 60 -> "방금 생성됨"
-      seconds < 3600 -> "#{div(seconds, 60)}분 전 생성"
-      seconds < 86_400 -> "#{div(seconds, 3600)}시간 전 생성"
-      true -> "#{div(seconds, 86_400)}일 전 생성"
+      seconds < 60 -> "just now"
+      seconds < 3600 -> "#{div(seconds, 60)}m ago"
+      seconds < 86_400 -> "#{div(seconds, 3600)}h ago"
+      true -> "#{div(seconds, 86_400)}d ago"
     end
   end
 end

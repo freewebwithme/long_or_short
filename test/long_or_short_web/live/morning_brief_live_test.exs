@@ -221,14 +221,16 @@ defmodule LongOrShortWeb.MorningBriefLiveTest do
 
       {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
 
-      assert html =~ "마지막 캐시"
+      assert html =~ "ready yet"
+      assert html =~ ~r/scheduled for \d/
+      assert html =~ "Last cached:"
       assert html =~ "STALE-FALLBACK-MARKER"
     end
 
     test "shows empty state when no digest exists at all", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/morning?view=all_recent")
 
-      assert html =~ "곧 준비됩니다"
+      assert html =~ "Brief is on the way"
     end
 
     test "regression: article list and view selector still render alongside the brief card",
