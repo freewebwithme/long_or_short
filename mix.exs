@@ -72,6 +72,7 @@ defmodule LongOrShort.MixProject do
       {:lazy_html, ">= 0.1.0", only: :test},
       {:live_debugger, "~> 0.7", only: [:dev]},
       {:mdex, "~> 0.5"},
+      {:nimble_csv, "~> 1.2"},
       {:oban, "~> 2.0"},
       {:oban_web, "~> 2.0"},
       {:phoenix, "~> 1.8.5"},

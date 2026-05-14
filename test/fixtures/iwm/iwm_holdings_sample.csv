@@ -1,0 +1,21 @@
+﻿iShares Russell 2000 ETF
+Fund Holdings as of,"May 12, 2026"
+Inception Date,"May 22, 2000"
+Shares Outstanding,"275,700,000.00"
+Stock,"-"
+Bond,"-"
+Cash,"-"
+Other,"-"
+
+Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date
+"BE","BLOOM ENERGY CLASS A CORP","Industrials","Equity","1,443,103,637.68","1.84","1,443,103,637.68","5,141,272.00","280.69","United States","NYSE","USD","1.00","USD","-"
+"CRDO","CREDO TECHNOLOGY GROUP HOLDING LTD","Information Technology","Equity","753,844,793.76","0.96","753,844,793.76","3,796,368.00","198.57","United States","NASDAQ","USD","1.00","USD","-"
+"FAKEARCA","NYSE ARCA LISTED TEST CORP","Financials","Equity","100,000,000.00","0.13","100,000,000.00","1,000,000.00","100.00","United States","NYSE Arca","USD","1.00","USD","-"
+"FAKEBATS","CBOE BZX LISTED TEST CORP","-","Equity","50,000,000.00","0.06","50,000,000.00","500,000.00","100.00","United States","Cboe BZX formerly known as BATS","USD","1.00","USD","-"
+"FAKEAMEX","NYSE AMERICAN LISTED TEST CORP","Health Care","Equity","25,000,000.00","0.03","25,000,000.00","250,000.00","100.00","United States","NYSE American","USD","1.00","USD","-"
+"XTSLA","BLACKROCK CASH FUNDS TREASURY SL AGENCY","-","Money Market","-","-","-","-","-","-","-","USD","1.00","USD","-"
+"USD","USD CASH","-","Cash","-","-","-","-","-","-","-","USD","1.00","USD","-"
+"RTYM6","RUSSELL 2000 EMINI JUN 26","-","Futures","-","-","-","-","-","-","-","USD","1.00","USD","-"
+"The content contained herein is owned or licensed by BlackRock and/or its third-party information providers and is protected by applicable copyrights, trademarks, service marks, and/or other intellectual property rights."
+"This material is strictly for illustrative, educational, or informational purposes and is subject to change."
+"©2026 BlackRock, Inc or its affiliates. All rights reserved."
