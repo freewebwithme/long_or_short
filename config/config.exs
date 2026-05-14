@@ -324,6 +324,24 @@ config :long_or_short, :filing_extraction_models, %{
   }
 }
 
+# Model pricing in **cents per million tokens** — integer arithmetic
+# throughout the cost path, no floats. Consumed by the Tier 1
+# `FilingAnalysisWorker` telemetry (LON-135) to compute per-run and
+# daily-running-total cost. Unknown models bypass the cost emit
+# (telemetry still fires, just with `cost_cents: 0`).
+config :long_or_short, :ai_model_prices, %{
+  # Anthropic Claude — public pricing snapshot, cents/M tokens
+  "claude-haiku-4-5-20251001" => %{input: 100, output: 500},
+  "claude-sonnet-4-6" => %{input: 300, output: 1500},
+  # Alibaba Qwen Singapore free tier — billed via free quota; placeholder
+  # 0 until the tier exhausts and we need a real USD rate.
+  "qwen3-max" => %{input: 0, output: 0},
+  # Mock provider for tests — mirrors Haiku/Sonnet so cost telemetry
+  # assertions are not provider-specific.
+  "mock-cheap" => %{input: 100, output: 500},
+  "mock-complex" => %{input: 300, output: 1500}
+}
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

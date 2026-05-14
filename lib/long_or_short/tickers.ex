@@ -109,6 +109,26 @@ defmodule LongOrShort.Tickers do
   end
 
   @doc """
+  All distinct ticker IDs currently in the small-cap universe.
+
+  Sibling of `small_cap_symbols/0` — returns the FK values so callers
+  that need to scope an `Ash.Query.filter(ticker_id in ^...)` don't
+  have to re-resolve symbols to ids. System-only, bypasses policies.
+  """
+  @spec small_cap_ticker_ids() :: [Ash.UUID.t()]
+  def small_cap_ticker_ids do
+    case list_active_small_cap_memberships(authorize?: false) do
+      {:ok, items} ->
+        items
+        |> Enum.map(& &1.ticker_id)
+        |> Enum.uniq()
+
+      _ ->
+        []
+    end
+  end
+
+  @doc """
   Per-ticker dilution profile — LON-116, Stage 4.
 
   Aggregates `LongOrShort.Filings.FilingAnalysis` rows into a single
