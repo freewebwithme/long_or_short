@@ -1,10 +1,18 @@
 defmodule LongOrShort.Filings.AnalyzerTest do
   @moduledoc """
-  Integration tests for `LongOrShort.Filings.Analyzer` (LON-115, Stage 3c).
+  Integration tests for `LongOrShort.Filings.Analyzer` (LON-115, Stage 3c;
+  two-tier split in LON-134).
 
-  Covers the three quality outcomes (`:high`, `:rejected`-via-validation,
-  `:rejected`-via-LLM), PubSub broadcast, skip-without-persist semantics,
-  and idempotent re-runs.
+  Covers:
+
+    * `analyze_filing/1` (orchestrator) — three quality outcomes
+      (`:high`, `:rejected`-via-validation, `:rejected`-via-LLM),
+      PubSub broadcast, skip-without-persist, idempotent re-runs.
+    * `extract_keywords/1` (Tier 1 only) — persists with
+      `dilution_severity = nil`, both success and LLM-failure paths.
+    * `score_severity/1` (Tier 2 only) — fills the verdict on a Tier 1
+      row, short-circuits on rejected, downgrades quality via Scoring
+      validation.
   """
 
   use LongOrShort.DataCase, async: false
@@ -280,6 +288,144 @@ defmodule LongOrShort.Filings.AnalyzerTest do
 
       assert first.id == second.id
       assert second.summary == "Second run"
+    end
+  end
+
+  # ── Tier 1: extract_keywords ────────────────────────────────────
+
+  describe "extract_keywords/1 — Tier 1 only" do
+    test "persists FilingAnalysis with severity nil on :high outcome" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER1OK"})
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      assert {:ok, %FilingAnalysis{} = analysis} = Filings.extract_keywords(filing.id)
+
+      assert analysis.extraction_quality == :high
+      assert analysis.dilution_severity == nil
+      assert analysis.matched_rules == []
+      assert analysis.severity_reason == nil
+
+      # Tier 1 jsonb + projected columns both populated.
+      assert is_map(analysis.extracted_keywords)
+      assert analysis.dilution_type == :atm
+      assert analysis.pricing_method == :vwap_based
+      assert analysis.summary =~ "ATM"
+    end
+
+    test "persists :rejected Tier 1 row with severity nil on LLM failure" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER1FAIL"})
+
+      MockProvider.stub(fn _, _, _ ->
+        {:ok, %{tool_calls: [], text: "no", usage: %{}}}
+      end)
+
+      assert {:ok, %FilingAnalysis{} = analysis} = Filings.extract_keywords(filing.id)
+
+      assert analysis.extraction_quality == :rejected
+      assert analysis.dilution_severity == nil
+      assert analysis.extracted_keywords == nil
+      assert analysis.rejected_reason == "extractor:no_tool_call"
+    end
+
+    test "returns :filing_raw_missing without persisting" do
+      filing = build_filing(%{filing_type: :s3, symbol: "TIER1NORAW"})
+
+      assert {:error, :filing_raw_missing} = Filings.extract_keywords(filing.id)
+      assert {:ok, nil} = Filings.get_filing_analysis_by_filing(filing.id, authorize?: false)
+    end
+
+    test "broadcasts :new_filing_analysis after Tier 1 write" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER1PUB"})
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+
+      assert {:ok, analysis} = Filings.extract_keywords(filing.id)
+
+      assert_receive {:new_filing_analysis, %FilingAnalysis{} = received}, 500
+      assert received.id == analysis.id
+      assert received.dilution_severity == nil
+    end
+  end
+
+  # ── Tier 2: score_severity ──────────────────────────────────────
+
+  describe "score_severity/1 — Tier 2 only" do
+    test "fills the severity verdict on an existing :high Tier 1 row" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER2OK"})
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+      {:ok, tier_1} = Filings.extract_keywords(filing.id)
+      assert tier_1.dilution_severity == nil
+
+      assert {:ok, %FilingAnalysis{} = tier_2} = Filings.score_severity(tier_1.id)
+      assert tier_2.id == tier_1.id
+      assert tier_2.dilution_severity == :low
+      assert tier_2.matched_rules == [:rule_default_low]
+      assert tier_2.extraction_quality == :high
+    end
+
+    test "short-circuits to severity = :none on a :rejected Tier 1 row" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER2REJ"})
+
+      MockProvider.stub(fn _, _, _ ->
+        {:ok, %{tool_calls: [], text: nil, usage: %{}}}
+      end)
+
+      {:ok, tier_1} = Filings.extract_keywords(filing.id)
+      assert tier_1.extraction_quality == :rejected
+
+      assert {:ok, tier_2} = Filings.score_severity(tier_1.id)
+      assert tier_2.dilution_severity == :none
+      assert tier_2.matched_rules == []
+      assert tier_2.severity_reason == nil
+      # Quality stays :rejected (Tier 1 already set it; the short-circuit
+      # doesn't touch quality or rejected_reason).
+      assert tier_2.extraction_quality == :rejected
+      assert tier_2.rejected_reason == "extractor:no_tool_call"
+    end
+
+    test "downgrades quality to :rejected when Scoring validation rejects" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER2DOWN"})
+
+      MockProvider.stub(fn _, _, _ ->
+        tool_response(valid_extracted_input(%{"share_count" => -1}))
+      end)
+
+      {:ok, tier_1} = Filings.extract_keywords(filing.id)
+      # Extractor accepts negative share_count; Scoring's Validation
+      # rejects it on the Tier 2 pass.
+      assert tier_1.extraction_quality == :high
+      assert tier_1.dilution_severity == nil
+
+      assert {:ok, tier_2} = Filings.score_severity(tier_1.id)
+      assert tier_2.extraction_quality == :rejected
+      assert tier_2.dilution_severity == :none
+      assert tier_2.rejected_reason =~ "validation:"
+    end
+
+    test "accepts a FilingAnalysis struct directly (skips the DB lookup)" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER2STRUCT"})
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+      {:ok, tier_1} = Filings.extract_keywords(filing.id)
+
+      assert {:ok, tier_2} = Filings.score_severity(tier_1)
+      assert tier_2.dilution_severity == :low
+    end
+
+    test "broadcasts :new_filing_analysis after Tier 2 write" do
+      filing = build_setup(%{filing_type: :s3, symbol: "TIER2PUB"})
+      MockProvider.stub(fn _, _, _ -> tool_response() end)
+      {:ok, tier_1} = Filings.extract_keywords(filing.id)
+
+      # Drain the Tier 1 broadcast first.
+      assert_receive {:new_filing_analysis, _}, 500
+
+      {:ok, _tier_2} = Filings.score_severity(tier_1.id)
+
+      assert_receive {:new_filing_analysis, %FilingAnalysis{dilution_severity: :low}}, 500
+    end
+
+    test "returns :filing_analysis_not_found for an unknown id" do
+      assert {:error, {:filing_analysis_not_found, _}} =
+               Filings.score_severity(Ash.UUIDv7.generate())
     end
   end
 end
