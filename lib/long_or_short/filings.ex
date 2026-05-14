@@ -11,15 +11,24 @@ defmodule LongOrShort.Filings do
   Form 4 (insider transactions) takes a different path — see
   "Form 4: structured XML, no LLM" below.
 
-  ## Single entry point for analysis
+  ## Single entry points for analysis
 
-  `analyze_filing/1,2` is the public surface for triggering the
-  extraction → scoring → persistence pipeline. It delegates to
-  `LongOrShort.Filings.Analyzer`, which orchestrates Stages 3a + 3b
-  and writes a `FilingAnalysis` row. Callers (Oban workers, future
-  manual-trigger UI) should always go through this domain function
-  rather than touching `Analyzer` directly — that keeps the domain
-  module the single grep-able entry for filing operations.
+  Three public functions trigger the dilution pipeline, all delegating
+  to `LongOrShort.Filings.Analyzer`:
+
+    * `analyze_filing/1,2` — full pipeline (Tier 1 + Tier 2 in sequence).
+      The orchestrator used by `FilingAnalysisWorker` today.
+    * `extract_keywords/1,2` — Tier 1 only (LON-134). Cheap proactive
+      pass: LLM extraction → persisted with `dilution_severity = nil`.
+      Used by the universe-wide extractor (LON-135).
+    * `score_severity/1,2` — Tier 2 only (LON-134). Reads the Tier 1
+      row, runs scoring, fills in the severity verdict. Used by the
+      on-demand `/analyze` + ticker-page triggers (LON-136).
+
+  Callers (Oban workers, future on-demand UI) should always go through
+  these domain functions rather than touching `Analyzer` directly —
+  that keeps this module the single grep-able entry for filing
+  operations.
 
   ## Form 4: structured XML, no LLM (LON-118)
 
@@ -59,7 +68,8 @@ defmodule LongOrShort.Filings do
 
     resource LongOrShort.Filings.FilingAnalysis do
       define :create_filing_analysis, action: :create
-      define :upsert_filing_analysis, action: :upsert
+      define :upsert_filing_analysis_tier_1, action: :upsert_tier_1
+      define :update_filing_analysis_tier_2, action: :update_tier_2
       define :get_filing_analysis, action: :read, get_by: [:id]
 
       define :get_filing_analysis_by_filing,
@@ -83,10 +93,27 @@ defmodule LongOrShort.Filings do
   end
 
   @doc """
-  Run extraction → scoring → persistence for a Filing and broadcast on
-  `\"filings:analyses\"`. See `LongOrShort.Filings.Analyzer` for the
-  full pipeline + error semantics.
+  Run Tier 1 + Tier 2 (extraction → scoring → persistence) for a
+  Filing and broadcast on `\"filings:analyses\"`. See
+  `LongOrShort.Filings.Analyzer` for the full pipeline + error
+  semantics.
   """
   defdelegate analyze_filing(filing_id), to: LongOrShort.Filings.Analyzer
   defdelegate analyze_filing(filing_id, opts), to: LongOrShort.Filings.Analyzer
+
+  @doc """
+  Tier 1 only — LLM extraction + persistence with `dilution_severity = nil`.
+  See `LongOrShort.Filings.Analyzer.extract_keywords/2`.
+  """
+  defdelegate extract_keywords(filing_id), to: LongOrShort.Filings.Analyzer
+  defdelegate extract_keywords(filing_id, opts), to: LongOrShort.Filings.Analyzer
+
+  @doc """
+  Tier 2 only — scoring of an existing Tier 1 row.
+  See `LongOrShort.Filings.Analyzer.score_severity/2`.
+  """
+  defdelegate score_severity(filing_analysis_or_id), to: LongOrShort.Filings.Analyzer
+
+  defdelegate score_severity(filing_analysis_or_id, opts),
+    to: LongOrShort.Filings.Analyzer
 end

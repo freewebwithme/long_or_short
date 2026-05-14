@@ -11,6 +11,34 @@ defmodule LongOrShort.Filings.FilingAnalysis do
   (this resource + `Filings.Analyzer`) persists the union and broadcasts
   on `\"filings:analyses\"` so downstream alerts (Stage 7) can react.
 
+  ## Two-tier write lifecycle (LON-134)
+
+  A row reaches its final state in **two separable writes**, so the
+  cheap proactive phase and the expensive on-demand phase can run on
+  different cadences (LON-131 epic):
+
+    * **Tier 1 — `:upsert_tier_1`** (cheap, proactive). The LLM
+      extraction pass. Persists `:extracted_keywords` (raw validated
+      jsonb), the projected fact columns (`:dilution_type`,
+      `:deal_size_usd`, etc.), and `:extraction_quality`. **Leaves
+      `:dilution_severity` `nil`** — scoring hasn't run. Phase 2
+      (LON-135) is what eventually drives this across the entire
+      small-cap universe.
+
+    * **Tier 2 — `:update_tier_2`** (on-demand). Reads the Tier 1
+      keywords, runs `Filings.Scoring` against `SeverityRules`, and
+      fills in `:dilution_severity`, `:matched_rules`,
+      `:severity_reason`. May also downgrade `:extraction_quality` to
+      `:rejected` when scoring-side validation catches a problem the
+      extractor missed (filer CIK mismatch, implausible numbers).
+      Phase 3 (LON-136) is what hooks this up to `/analyze` + ticker
+      pages.
+
+  Phase 0 of the refactor (this ticket, LON-134) is
+  **behavior-preserving** — `FilingAnalysisWorker` still goes through
+  `Analyzer.analyze_filing/2`, which calls both tiers in sequence.
+  The proactive / on-demand split is wired up in LON-135 + LON-136.
+
   ## Field categories
 
     - **Extraction facts** — what the LLM pulled out of the filing
@@ -199,16 +227,33 @@ defmodule LongOrShort.Filings.FilingAnalysis do
       description "One-line LLM-authored summary suitable for UI cards."
     end
 
+    attribute :extracted_keywords, :map do
+      public? true
+
+      description """
+      Tier 1 (LON-134) output — the full validated LLM extraction stored
+      as jsonb for audit + as the source-of-truth feeding Tier 2 scoring.
+      The individual `:dilution_type`/`:deal_size_usd`/... columns above
+      are projections of this map written at the same time, kept for
+      composite-index and joinable-query purposes. `nil` when the row
+      represents a Tier 1 failure (extractor never produced validated
+      output).
+      """
+    end
+
     # ── Severity verdict (from Stage 3b Scoring) ──────────────────
     attribute :dilution_severity, :atom do
-      allow_nil? false
+      allow_nil? true
       public? true
       constraints one_of: [:critical, :high, :medium, :low, :none]
 
       description """
       Final severity from `Filings.Scoring`. Never asked of the LLM —
       derived deterministically from `SeverityRules`. `:none` means
-      either validation rejected the extraction or no rule fired.
+      either validation rejected the extraction or no rule fired. `nil`
+      means Tier 2 (LON-134) has not run yet — the row is in the
+      Tier-1-only state that the proactive extractor (LON-135) leaves
+      until a trader's on-demand request (LON-136) triggers scoring.
       """
     end
 
@@ -292,9 +337,51 @@ defmodule LongOrShort.Filings.FilingAnalysis do
     end
   end
 
+  # Tier 1 (LON-134) writable attrs — set by `Analyzer.extract_keywords/2`.
+  # `:extraction_quality` and `:rejected_reason` also appear in `@tier_2_attrs`
+  # because Tier 2 scoring can downgrade a `:high` to `:rejected` when
+  # scoring-side validation fails (e.g. filer CIK mismatch).
+  @tier_1_attrs [
+    :extracted_keywords,
+    :dilution_type,
+    :deal_size_usd,
+    :share_count,
+    :pricing_method,
+    :pricing_discount_pct,
+    :warrant_strike,
+    :warrant_term_years,
+    :atm_remaining_shares,
+    :atm_total_authorized_shares,
+    :shelf_total_authorized_usd,
+    :shelf_remaining_usd,
+    :convertible_conversion_price,
+    :has_anti_dilution_clause,
+    :has_death_spiral_convertible,
+    :is_reverse_split_proxy,
+    :reverse_split_ratio,
+    :summary,
+    :extraction_quality,
+    :rejected_reason,
+    :flags,
+    :provider,
+    :model,
+    :raw_response
+  ]
+
+  # Tier 2 (LON-134) writable attrs — set by `Analyzer.score_severity/2`.
+  @tier_2_attrs [
+    :dilution_severity,
+    :matched_rules,
+    :severity_reason,
+    :extraction_quality,
+    :rejected_reason
+  ]
+
+  # Used by the test-factory `:create` action — full surface, no upsert.
   @fields [
     :filing_id,
     :ticker_id,
+    :extracted_keywords,
     :dilution_type,
     :deal_size_usd,
     :share_count,
@@ -323,36 +410,6 @@ defmodule LongOrShort.Filings.FilingAnalysis do
     :raw_response
   ]
 
-  @upsert_fields [
-    :dilution_type,
-    :deal_size_usd,
-    :share_count,
-    :pricing_method,
-    :pricing_discount_pct,
-    :warrant_strike,
-    :warrant_term_years,
-    :atm_remaining_shares,
-    :atm_total_authorized_shares,
-    :shelf_total_authorized_usd,
-    :shelf_remaining_usd,
-    :convertible_conversion_price,
-    :has_anti_dilution_clause,
-    :has_death_spiral_convertible,
-    :is_reverse_split_proxy,
-    :reverse_split_ratio,
-    :summary,
-    :dilution_severity,
-    :matched_rules,
-    :severity_reason,
-    :extraction_quality,
-    :rejected_reason,
-    :flags,
-    :provider,
-    :model,
-    :raw_response,
-    :analyzed_at
-  ]
-
   actions do
     defaults [:read, :destroy]
 
@@ -361,22 +418,34 @@ defmodule LongOrShort.Filings.FilingAnalysis do
       accept @fields
     end
 
-    create :upsert do
+    create :upsert_tier_1 do
       description """
-      Primary write path used by `Filings.Analyzer`. Re-running the
-      analyzer on a Filing overwrites the existing row and advances
-      `:analyzed_at`. Identity columns (`:filing_id`, `:ticker_id`)
-      are not in `upsert_fields` — they cannot drift.
+      Tier 1 write — extraction facts (or extractor-side failure
+      record). Called by `Analyzer.extract_keywords/2`. Re-running on
+      the same filing overwrites the extraction state but leaves any
+      Tier 2 fields already filled in by `:update_tier_2` intact
+      (they aren't in `upsert_fields`).
       """
 
       upsert? true
       upsert_identity :unique_filing_analysis
 
-      accept @fields
+      accept [:filing_id, :ticker_id | @tier_1_attrs]
 
-      upsert_fields @upsert_fields
+      upsert_fields @tier_1_attrs ++ [:analyzed_at]
 
       change set_attribute(:analyzed_at, &DateTime.utc_now/0)
+    end
+
+    update :update_tier_2 do
+      description """
+      Tier 2 write — fills in the severity verdict on a Tier-1 row.
+      Called by `Analyzer.score_severity/2`. May overwrite
+      `:extraction_quality` to `:rejected` when scoring-side
+      validation fails (e.g. filer CIK mismatch, implausible numbers).
+      """
+
+      accept @tier_2_attrs
     end
 
     read :get_by_filing do
