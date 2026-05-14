@@ -65,7 +65,16 @@ config :long_or_short, Oban,
        # worker-side-filter pattern as the boundary poll above —
        # we can't promote a per-entry timezone without shifting
        # the UTC-anchored daily jobs at the top of this list.
-       {"0,15,30,45 * * * *", LongOrShort.MorningBrief.CronWorker}
+       {"0,15,30,45 * * * *", LongOrShort.MorningBrief.CronWorker},
+       # Weekly Monday 06:00 UTC (~01:00–02:00 ET, dead pre-market) —
+       # refresh the small-cap universe from iShares IWM holdings CSV
+       # (LON-133, Phase 0). Daily would re-download the same data
+       # since Russell 2000 changes slowly; weekly is the right
+       # cadence for IPO adds + occasional rebalances. Runs after
+       # CikSyncWorker (04:00) and FinnhubProfileSync (05:00) so
+       # newly-added R2K tickers already have CIK + profile data
+       # when this worker upserts them.
+       {"0 6 * * 1", LongOrShort.Tickers.Workers.IwmUniverseSync}
      ]}
   ]
 

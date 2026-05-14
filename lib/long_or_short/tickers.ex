@@ -55,6 +55,11 @@ defmodule LongOrShort.Tickers do
       define :list_watchlist, action: :list_for_user, args: [:user_id]
       define :list_all_watchlist_items, action: :list_all
     end
+
+    resource LongOrShort.Tickers.SmallCapUniverseMembership do
+      define :upsert_small_cap_membership, action: :upsert_observed
+      define :list_active_small_cap_memberships, action: :list_active
+    end
   end
 
   @doc """
@@ -72,6 +77,27 @@ defmodule LongOrShort.Tickers do
   @spec all_watchlist_symbols() :: [String.t()]
   def all_watchlist_symbols do
     case list_all_watchlist_items(authorize?: false) do
+      {:ok, items} ->
+        items
+        |> Enum.map(&String.upcase(&1.ticker.symbol))
+        |> Enum.uniq()
+
+      _ ->
+        []
+    end
+  end
+
+  @doc """
+  All distinct ticker symbols currently in the small-cap universe.
+
+  Returns an uppercased, deduplicated list ordered by membership
+  insertion time (oldest first). System-only — bypasses policies. The
+  intended caller is the Phase 2 Tier 1 filing extractor worker
+  (LON-135); UI code paths should not depend on this.
+  """
+  @spec small_cap_symbols() :: [String.t()]
+  def small_cap_symbols do
+    case list_active_small_cap_memberships(authorize?: false) do
       {:ok, items} ->
         items
         |> Enum.map(&String.upcase(&1.ticker.symbol))
