@@ -96,4 +96,36 @@ defmodule LongOrShortWeb.TelemetryTest do
       assert [:vm, :memory] in events
     end
   end
+
+  describe "console_metrics/0 (LON-169)" do
+    test "excludes :repo events to avoid flooding the dev console" do
+      events =
+        LongOrShortWeb.Telemetry.console_metrics()
+        |> Enum.map(& &1.event_name)
+        |> Enum.uniq()
+
+      refute [:long_or_short, :repo, :query] in events
+    end
+
+    test "excludes non-:long_or_short events (Phoenix, VM)" do
+      console_prefixes =
+        LongOrShortWeb.Telemetry.console_metrics()
+        |> Enum.map(fn m -> hd(m.event_name) end)
+        |> Enum.uniq()
+
+      assert console_prefixes == [:long_or_short],
+             "console_metrics/0 leaked a non-:long_or_short event: #{inspect(console_prefixes)}"
+    end
+
+    test "includes the worker complete events that motivated LON-168" do
+      events =
+        LongOrShortWeb.Telemetry.console_metrics()
+        |> Enum.map(& &1.event_name)
+        |> Enum.uniq()
+
+      assert [:long_or_short, :filing_analysis_worker, :complete] in events
+      assert [:long_or_short, :ingest_health, :daily_summary] in events
+      assert [:long_or_short, :finnhub_stream, :disconnected] in events
+    end
+  end
 end
