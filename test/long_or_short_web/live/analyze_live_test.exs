@@ -16,12 +16,14 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
   import LongOrShort.AnalysisFixtures
   import Phoenix.LiveViewTest
   import LongOrShort.AccountsFixtures
+  import LongOrShort.FilingsFixtures
   import LongOrShort.NewsFixtures
   import LongOrShort.TickersFixtures
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
   alias LongOrShort.AI.MockProvider
   alias LongOrShort.Analysis.Events, as: AnalysisEvents
+  alias LongOrShort.Filings.Events, as: FilingsEvents
   alias LongOrShortWeb.AnalyzeLive
 
   setup do
@@ -482,6 +484,76 @@ defmodule LongOrShortWeb.AnalyzeLiveTest do
 
       assert html =~ "Take 01"
       refute html =~ "Load more"
+    end
+  end
+
+  describe "dilution profile rendering (LON-162)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders live severity from FilingAnalysis on :show",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "ANALDIL"})
+      article = build_article_for_ticker(ticker, %{title: "Analyze dilution test"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s3})
+      build_filing_analysis(filing, %{dilution_severity: :critical})
+
+      {:ok, _view, html} = live(conn, ~p"/analyze/#{article.id}")
+
+      assert html =~ "💧"
+      assert html =~ "CRITICAL"
+    end
+
+    test "subscribes to filings:analyses and re-renders on :new_filing_analysis",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "ANALPUB"})
+      article = build_article_for_ticker(ticker, %{title: "Analyze pubsub test"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      {:ok, view, html} = live(conn, ~p"/analyze/#{article.id}")
+      assert html =~ "UNKNOWN"
+
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s1})
+      analysis = build_filing_analysis(filing, %{dilution_severity: :high})
+
+      FilingsEvents.broadcast_analysis_ready(analysis)
+
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "HIGH"
+      refute html =~ "UNKNOWN"
+    end
+
+    test "ignores :new_filing_analysis for a different ticker",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "DISPLAY"})
+      other_ticker = build_ticker(%{symbol: "OTHER"})
+
+      article = build_article_for_ticker(ticker, %{title: "Displayed article"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      {:ok, view, _html} = live(conn, ~p"/analyze/#{article.id}")
+
+      # Broadcast for a ticker that's NOT the displayed article's ticker
+      other_filing = build_filing_for_ticker(other_ticker, %{filing_type: :s1})
+      other_analysis = build_filing_analysis(other_filing, %{dilution_severity: :critical})
+
+      FilingsEvents.broadcast_analysis_ready(other_analysis)
+
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      # Displayed article's pill stays at UNKNOWN — the other ticker's
+      # CRITICAL must not leak in.
+      assert html =~ "UNKNOWN"
+      refute html =~ "CRITICAL"
     end
   end
 end

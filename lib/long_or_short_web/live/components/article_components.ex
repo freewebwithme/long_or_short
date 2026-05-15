@@ -42,6 +42,7 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
   attr :analyze_disabled?, :boolean, default: false
   attr :expanded?, :boolean, default: false
   attr :context, :string, default: "card"
+  attr :dilution_profile, :map, default: nil
 
   def article_card(assigns) do
     assigns = assign(assigns, :ticker_symbols, ticker_symbols_for(assigns.article))
@@ -101,11 +102,13 @@ defmodule LongOrShortWeb.Live.Components.ArticleComponents do
         :if={@analysis && not @analyzing?}
         analysis={@analysis}
         expanded?={@expanded?}
+        dilution_profile={@dilution_profile}
       />
 
       <NewsComponents.news_detail
         :if={@analysis && @expanded?}
         analysis={@analysis}
+        dilution_profile={@dilution_profile}
       />
 
       <div :if={@article.url} class="mt-2 flex justify-end">

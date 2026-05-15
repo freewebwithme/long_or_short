@@ -30,7 +30,7 @@ defmodule LongOrShortWeb.DashboardLive do
   alias LongOrShort.{Analysis, Indices, News, Tickers}
   alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
-  alias LongOrShortWeb.Live.ArticleDedup
+  alias LongOrShortWeb.Live.{ArticleDedup, DilutionProfiles}
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
   alias LongOrShortWeb.MorningBrief.Bucket
@@ -46,6 +46,7 @@ defmodule LongOrShortWeb.DashboardLive do
       News.Events.subscribe()
       Indices.Events.subscribe()
       WatchlistEvents.subscribe(actor.id)
+      DilutionProfiles.subscribe()
     end
 
     watchlist = load_watchlist(actor)
@@ -72,6 +73,8 @@ defmodule LongOrShortWeb.DashboardLive do
       |> assign(:search_results, [])
       |> assign(:active_ticker, nil)
       |> assign(:indices, %{})
+      |> assign(:dilution_profiles, %{})
+      |> refresh_dilution_profiles()
 
     {:ok, socket}
   end
@@ -148,7 +151,8 @@ defmodule LongOrShortWeb.DashboardLive do
        |> assign(:active_ticker, ticker)
        |> assign(:active_news, ArticleDedup.dedup(articles))
        |> assign(:search_query, ticker.symbol)
-       |> assign(:search_results, [])}
+       |> assign(:search_results, [])
+       |> refresh_dilution_profiles()}
     else
       _ -> {:noreply, socket}
     end
@@ -205,7 +209,8 @@ defmodule LongOrShortWeb.DashboardLive do
          socket
          |> assign(:news, news)
          |> assign(:watchlist_news, watchlist_news)
-         |> assign(:morning_brief_preview, morning_brief_preview)}
+         |> assign(:morning_brief_preview, morning_brief_preview)
+         |> refresh_dilution_profiles()}
 
       {:error, _} ->
         {:noreply, socket}
@@ -239,7 +244,19 @@ defmodule LongOrShortWeb.DashboardLive do
      socket
      |> assign(:watchlist, watchlist)
      |> assign(:watchlist_ticker_ids, ticker_ids)
-     |> assign(:watchlist_news, watchlist_news)}
+     |> assign(:watchlist_news, watchlist_news)
+     |> refresh_dilution_profiles()}
+  end
+
+  # Tier 2 promotion (LON-136 broadcast). Refresh the affected ticker's
+  # profile entry — plain-assigns lists re-render automatically.
+  def handle_info({:new_filing_analysis, %{ticker_id: ticker_id}}, socket) do
+    {:noreply,
+     assign(
+       socket,
+       :dilution_profiles,
+       DilutionProfiles.refresh_one(socket.assigns.dilution_profiles, ticker_id)
+     )}
   end
 
   def handle_info({:index_tick, label, payload}, socket) do
@@ -270,6 +287,7 @@ defmodule LongOrShortWeb.DashboardLive do
               analyzing_ids={@analyzing_ids}
               expanded_ids={@expanded_ids}
               analyze_disabled?={is_nil(@current_user.trading_profile)}
+              dilution_profiles={@dilution_profiles}
             />
           </div>
         </div>
@@ -283,6 +301,7 @@ defmodule LongOrShortWeb.DashboardLive do
             analyzing_ids={@analyzing_ids}
             expanded_ids={@expanded_ids}
             analyze_disabled?={is_nil(@current_user.trading_profile)}
+            dilution_profiles={@dilution_profiles}
           />
           <.watchlist_news_card
             :if={@watchlist != []}
@@ -290,6 +309,7 @@ defmodule LongOrShortWeb.DashboardLive do
             analyzing_ids={@analyzing_ids}
             expanded_ids={@expanded_ids}
             analyze_disabled?={is_nil(@current_user.trading_profile)}
+            dilution_profiles={@dilution_profiles}
           />
         </div>
       </div>
@@ -382,6 +402,7 @@ defmodule LongOrShortWeb.DashboardLive do
   attr :analyzing_ids, :any, required: true
   attr :expanded_ids, :any, required: true
   attr :analyze_disabled?, :boolean, required: true
+  attr :dilution_profiles, :map, required: true
 
   defp ticker_news_card(assigns) do
     ~H"""
@@ -403,6 +424,7 @@ defmodule LongOrShortWeb.DashboardLive do
           analyze_disabled?={@analyze_disabled?}
           expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="active"
+          dilution_profile={@dilution_profiles[article.ticker_id]}
         />
       </div>
     </section>
@@ -518,6 +540,7 @@ defmodule LongOrShortWeb.DashboardLive do
   attr :analyzing_ids, :any, required: true
   attr :expanded_ids, :any, required: true
   attr :analyze_disabled?, :boolean, required: true
+  attr :dilution_profiles, :map, required: true
 
   defp all_news_card(assigns) do
     ~H"""
@@ -537,6 +560,7 @@ defmodule LongOrShortWeb.DashboardLive do
           analyze_disabled?={@analyze_disabled?}
           expanded?={MapSet.member?(@expanded_ids, article.id)}
           context="all"
+          dilution_profile={@dilution_profiles[article.ticker_id]}
         />
       </div>
     </section>
@@ -547,6 +571,7 @@ defmodule LongOrShortWeb.DashboardLive do
   attr :analyzing_ids, :any, required: true
   attr :expanded_ids, :any, required: true
   attr :analyze_disabled?, :boolean, required: true
+  attr :dilution_profiles, :map, required: true
 
   defp watchlist_news_card(assigns) do
     ~H"""
@@ -562,6 +587,7 @@ defmodule LongOrShortWeb.DashboardLive do
           :for={article <- @news}
           article={article}
           analysis={extract_analysis(article)}
+          dilution_profile={@dilution_profiles[article.ticker_id]}
           analyzing?={MapSet.member?(@analyzing_ids, article.id)}
           analyze_disabled?={@analyze_disabled?}
           expanded?={MapSet.member?(@expanded_ids, article.id)}
@@ -705,6 +731,21 @@ defmodule LongOrShortWeb.DashboardLive do
       {:ok, article} -> replace_article_in_lists(socket, article)
       {:error, _} -> socket
     end
+  end
+
+  defp refresh_dilution_profiles(socket) do
+    ticker_ids =
+      (socket.assigns.news ++
+         socket.assigns.watchlist_news ++
+         socket.assigns.active_news ++
+         socket.assigns.morning_brief_preview)
+      |> Enum.map(& &1.ticker_id)
+
+    assign(
+      socket,
+      :dilution_profiles,
+      DilutionProfiles.ensure_loaded(socket.assigns.dilution_profiles, ticker_ids)
+    )
   end
 
   defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a

@@ -22,6 +22,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
   alias LongOrShort.{Analysis, News, Tickers}
   alias LongOrShort.Analysis.Events
+  alias LongOrShortWeb.Live.DilutionProfiles
   alias LongOrShortWeb.Live.Components.{ArticleComponents, NewsComponents, TickerAutocomplete}
 
   @recent_page_limit 20
@@ -30,6 +31,8 @@ defmodule LongOrShortWeb.AnalyzeLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: DilutionProfiles.subscribe()
+
     socket =
       socket
       |> assign(:ticker_query, "")
@@ -41,6 +44,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
       |> assign(:recent_filter_query, "")
       |> assign(:recent_filter_results, [])
       |> assign(:recent_filter_ticker_id, nil)
+      |> assign(:dilution_profile, nil)
       |> load_recent_analyses(%{})
 
     {:ok, socket}
@@ -60,7 +64,8 @@ defmodule LongOrShortWeb.AnalyzeLive do
         {:noreply,
          socket
          |> assign(:article, article)
-         |> assign(:analyzing?, analyzing?)}
+         |> assign(:analyzing?, analyzing?)
+         |> assign(:dilution_profile, DilutionProfiles.load_one(article.ticker_id))}
 
       {:error, _} ->
         {:noreply,
@@ -76,7 +81,8 @@ defmodule LongOrShortWeb.AnalyzeLive do
      |> assign(:article, nil)
      |> assign(:analyzing?, false)
      |> assign(:expanded?, true)
-     |> assign(:form_errors, %{})}
+     |> assign(:form_errors, %{})
+     |> assign(:dilution_profile, nil)}
   end
 
   # ── Events ────────────────────────────────────────────────────────────
@@ -287,6 +293,18 @@ defmodule LongOrShortWeb.AnalyzeLive do
      |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")}
   end
 
+  # Tier 2 promotion (LON-136). Refresh the displayed article's profile
+  # only if the broadcast matches its ticker.
+  def handle_info({:new_filing_analysis, %{ticker_id: ticker_id}}, socket) do
+    case socket.assigns.article do
+      %{ticker_id: ^ticker_id} ->
+        {:noreply, assign(socket, :dilution_profile, DilutionProfiles.load_one(ticker_id))}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   # ── Public helpers ────────────────────────────────────────────────────
 
   @doc """
@@ -483,6 +501,7 @@ defmodule LongOrShortWeb.AnalyzeLive do
             analyzing?={@analyzing?}
             analyze_disabled?={is_nil(@current_user.trading_profile)}
             expanded?={@expanded?}
+            dilution_profile={@dilution_profile}
           />
         <% end %>
       </div>

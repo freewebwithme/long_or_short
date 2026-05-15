@@ -7,12 +7,14 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
 
     * `news_pill/1` — one coloured pill (signal axis + value)
     * `dilution_pill/1` — dilution-severity pill rendered from the
-      LON-117 snapshot (`:dilution_severity_at_analysis` +
-      `:dilution_summary_at_analysis`)
+      live `Tickers.get_dilution_profile/1` aggregate (LON-162). The
+      pre-LON-162 snapshot columns on `NewsAnalysis`
+      (`:dilution_severity_at_analysis` etc.) are still written but
+      no longer read by these components.
     * `news_card/1` — compact 7-pill block + `headline_takeaway` +
       Detail toggle
     * `news_detail/1` — expanded view: 5 Markdown sections + a
-      Dilution context block sourced from the snapshot
+      Dilution context block sourced from the live profile
 
   Pill colour mapping is per LON-83. Phase 1 stub fields
   (`:insufficient_data`, `:partial`) carry a dashed border + tooltip so
@@ -32,9 +34,13 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
   ## Attrs
     * `:analysis` — `%NewsAnalysis{}`, required
     * `:expanded?` — whether the Detail view is open (parent owns this)
+    * `:dilution_profile` — live profile from `Tickers.get_dilution_profile/1`
+      (LON-162). `nil` means the parent hasn't loaded yet → pill renders
+      as `:unknown` (dashed border).
   """
   attr :analysis, NewsAnalysis, required: true
   attr :expanded?, :boolean, default: false
+  attr :dilution_profile, :map, default: nil
 
   def news_card(assigns) do
     ~H"""
@@ -67,8 +73,8 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
           field={:strategy_match}
         />
         <.dilution_pill
-          severity={@analysis.dilution_severity_at_analysis}
-          summary={@analysis.dilution_summary_at_analysis}
+          severity={profile_severity(@dilution_profile)}
+          summary={profile_summary(@dilution_profile)}
         />
         <.news_pill emoji="🚦" value={@analysis.verdict} field={:verdict} bold />
       </div>
@@ -241,8 +247,14 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
   @doc """
   Five Markdown sections rendered with MDEx. Sections with empty bodies
   are omitted (the LLM may legitimately leave one blank).
+
+  ## Attrs
+    * `:analysis` — `%NewsAnalysis{}`, required
+    * `:dilution_profile` — live profile from `Tickers.get_dilution_profile/1`
+      (LON-162). `nil` collapses the Dilution context section.
   """
   attr :analysis, NewsAnalysis, required: true
+  attr :dilution_profile, :map, default: nil
 
   def news_detail(assigns) do
     ~H"""
@@ -251,9 +263,9 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
       <.detail_section title="✅ Positives" body={@analysis.detail_positives} />
       <.detail_section title="⚠️  Concerns" body={@analysis.detail_concerns} />
       <.dilution_section
-        severity={@analysis.dilution_severity_at_analysis}
-        summary={@analysis.dilution_summary_at_analysis}
-        flags={@analysis.dilution_flags_at_analysis}
+        severity={profile_severity(@dilution_profile)}
+        summary={profile_summary(@dilution_profile)}
+        flags={profile_flags(@dilution_profile)}
       />
       <.detail_section title="📋 Pre-entry checklist" body={@analysis.detail_checklist} />
       <.detail_section title="🎯 Recommendation" body={@analysis.detail_recommendation} />
@@ -307,5 +319,28 @@ defmodule LongOrShortWeb.Live.Components.NewsComponents do
   end
 
   defp show_dilution_section?(:none, []), do: false
+  defp show_dilution_section?(:unknown, []), do: false
   defp show_dilution_section?(_severity, _flags), do: true
+
+  # ── Profile field extractors (LON-162) ──────────────────────────
+  # The dilution surfaces switched from the LON-117 `_at_analysis`
+  # snapshot to live `Tickers.get_dilution_profile/1` reads. These
+  # helpers normalize the profile map's "no data" shape
+  # (`data_completeness: :insufficient`, or profile `nil` while the
+  # caller hasn't loaded) into the pill's `:unknown` dashed-border
+  # state. Keeps "no data" visually distinct from `:none` ("data,
+  # no risk") — same rule as the LON-117 snapshot semantics.
+
+  defp profile_severity(nil), do: :unknown
+  defp profile_severity(%{data_completeness: :insufficient}), do: :unknown
+  defp profile_severity(%{overall_severity: sev}) when is_atom(sev), do: sev
+  defp profile_severity(_), do: :unknown
+
+  defp profile_summary(nil), do: nil
+  defp profile_summary(%{data_completeness: :insufficient}), do: nil
+  defp profile_summary(%{overall_severity_reason: reason}), do: reason
+  defp profile_summary(_), do: nil
+
+  defp profile_flags(%{flags: flags}) when is_list(flags), do: flags
+  defp profile_flags(_), do: []
 end
