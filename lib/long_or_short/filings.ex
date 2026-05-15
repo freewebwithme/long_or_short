@@ -94,6 +94,18 @@ defmodule LongOrShort.Filings do
   end
 
   @doc """
+  System-actor wrapper around `ingest_filing/2` used as the default
+  pipeline sink (`:filings_ingest_fun` in config). The SEC EDGAR
+  feeder is a background process with no user context, so it bypasses
+  policies via `LongOrShort.Accounts.SystemActor`. Mirrors the
+  News pipeline's pattern (`News.Sources.Pipeline` calls
+  `News.ingest_article(_, actor: SystemActor.new())` directly).
+  """
+  def ingest_filing_as_system(attrs) do
+    ingest_filing(attrs, actor: LongOrShort.Accounts.SystemActor.new())
+  end
+
+  @doc """
   Run Tier 1 + Tier 2 (extraction → scoring → persistence) for a
   Filing and broadcast on `\"filings:analyses\"`. See
   `LongOrShort.Filings.Analyzer` for the full pipeline + error
