@@ -1,7 +1,7 @@
 # Roadmap
 
 > Linear is the source of truth — see https://linear.app/long-or-short/ for ticket-level detail.
-> This document explains **"why this order"**. Last updated: 2026-05-05
+> This document explains **"why this order"**. Last updated: 2026-05-15
 
 ---
 
@@ -21,13 +21,19 @@ Combining these answers the question: "What does this news mean *for your* style
 
 ```
 Phase 0: Infrastructure                    ████████████ Complete
-Phase 1: AI analysis validation            ██████░░░░░░ In progress (LON-78 nearly done)
-Phase 2: Trader workflow integration       ████████░░░░ Mostly done (LON-69 done, LON-58 partial)
+Phase 1: AI analysis validation            ███████████░ Mostly done — NewsAnalysis live, dilution epic shipped
+Phase 2: Trader workflow integration       ██████████░░ Mostly done — Morning Brief is the proven utility (2026-05-15)
 Phase 3: Journaling — personal data        ░░░░░░░░░░░░ Spec only (LON-86, LON-87)
 Phase 4: External user acquisition         ░░░░░░░░░░░░ Not started
-Phase 5: Commercial data negotiation       ░░░░░░░░░░░░ Not started
+Phase 5: Commercial data negotiation       ░░░░░░░░░░░░ Not started — paid data unlocks dormant value
 Phase 6: AI Advisor evolution              ░░░░░░░░░░░░ Vision
 ```
+
+**Validation as of 2026-05-15** (the trader's own assessment):
+
+- **Morning Brief is the only surface with proven trading utility.** Used daily, helps actual entry decisions. LON-147/149/151 family.
+- **News feed / dashboard cards don't directly help trades yet** — bottlenecked on free-tier news velocity. Infrastructure is correct; the value unlocks at Phase 5 (paid data).
+- **Dilution pipeline (LON-131) is fully live** in production-ish mode: SEC EDGAR + body fetch + Tier 1 LLM extract + Tier 2 deterministic scoring + live UI surfaces. Cost is ~$1.19/day at current volume (LON-163/164 brought it down 67%).
 
 ---
 
@@ -46,23 +52,22 @@ Phase 6: AI Advisor evolution              ░░░░░░░░░░░░ 
 
 ---
 
-## Phase 1 — AI analysis validation (current)
+## Phase 1 — AI analysis validation
 
 **Hypothesis**: AI-generated news analysis genuinely helps traders make entry decisions.
 
-**Why this matters most**: If this isn't validated, every other phase is meaningless. This is the app's core value proposition.
+**Status — substantively validated, with caveat.** NewsAnalysis epic (LON-78) shipped end-to-end. The dilution-tracking epic (LON-131, parented under LON-106) shipped its full two-tier extract + score architecture across LON-133/134/135/136/162 + 2026-05-15 hotfixes. Personal daily use confirms the **Morning Brief** (LON-147/149) is where the LLM analysis actually moves trading decisions; the per-article `/feed` analysis works as designed but doesn't beat free-tier news velocity for catalyst-driven entries.
 
-**Current state**: NewsAnalysis epic (LON-78) nearly complete. Backend works, only UI wiring remains.
+**Key deliverables landed**:
+- LON-78 NewsAnalysis end-to-end (resource + analyzer + UI rewire)
+- LON-131 two-tier dilution analysis (Phases 0-3b): SmallCapUniverse + Analyzer split + universe-wide Tier 1 cron + Tier 2 background sweep + live UI
+- LON-147/149/151 Morning Brief: Anthropic Claude + web_search-driven catalyst digest, three daily windows (premarket / after-open / mid-morning)
+- LON-88 TradingProfile per-user persona drives both NewsAnalysis prompts and the Morning Brief
 
-**Remaining milestones**:
-- **LON-83**: `/feed` Analyze button + 6-signal card UI rewire
-- **LON-84**: Manual article ingest action
-- **LON-85**: `/analyze` paste-driven page — sidesteps licensing + accelerates validation
-
-**Phase 1 exit criteria**:
-- [ ] Daily personal use, intuitive feel for analysis quality
-- [ ] Patterns identified for when analysis is right vs. wrong
-- [ ] First round of prompt + TradingProfile tuning
+**Phase 1 exit criteria — assessment**:
+- [x] Daily personal use, intuitive feel for analysis quality (Morning Brief specifically)
+- [x] Patterns identified for when analysis is right vs. wrong (free-tier news limits NewsAnalysis upside; Morning Brief uses web_search to bypass)
+- [ ] First round of prompt + TradingProfile tuning beyond the initial pass — pending more daily use
 
 ---
 
@@ -70,18 +75,23 @@ Phase 6: AI Advisor evolution              ░░░░░░░░░░░░ 
 
 **Hypothesis**: Good analysis alone isn't enough. Traders need to integrate it naturally into their workflow.
 
-**Current state**: Dashboard epic (LON-69) complete, Filter epic (LON-58) partially complete.
+**Status — mostly done, Morning Brief is the workflow win.**
 
 **Done**:
 - Dashboard skeleton, navigation, design tokens (LON-70, LON-72)
-- Watchlist widget, ticker search, indices widget (LON-73, LON-74, LON-75, LON-76)
+- Watchlist widget, ticker search, indices widget (LON-73-76)
 - File-backed watchlist (LON-64)
-- Price + float filters (LON-62)
+- Price + float filters (LON-62 + LON-170 hotfix)
+- Live last_price via Finnhub WebSocket trade ticks (LON-60), now with smart-reconnect lifecycle (LON-67)
+- Live dilution pills on news cards, PubSub-driven refresh (LON-162)
+- **Morning Brief** — three daily catalyst digests with web_search-grounded analysis (LON-147/149/151)
+- Operational dashboard wiring: LiveDashboard `/dev/dashboard/metrics` with 65 metrics across 28 events (LON-168/169)
 
 **Remaining milestones**:
 - LON-77: Off-hours / closed pill indicator
 - LON-63: Relative volume filter (blocked by LON-61 deferred)
-- LON-68: Accurate free-float source (FMP)
+- LON-68: Accurate free-float source (FMP / Polygon) — proxy via Finnhub `shareOutstanding` good enough for now (LON-167 expanded coverage to ~1,900 small caps)
+- LON-148: Morning Brief Qwen fallback if Anthropic budget tightens (deferred — current burn is comfortable)
 
 ---
 
@@ -175,18 +185,48 @@ Phase 6: AI Advisor evolution              ░░░░░░░░░░░░ 
 Things to keep an eye on regardless of phase progression.
 
 ### AI cost optimization (LON-35 epic)
-- Negligible right now (solo use)
+- Tier 1 dilution pipeline burn: ~$1.19/day at current volume after the LON-163 (retry-with-backoff) + LON-164 (section dedup) hotfixes — 67% reduction from the pre-fix baseline
+- Morning Brief: Claude Sonnet 4.6 with web_search, one call per window × 3 windows × ~weekday cadence — currently in single-digit-dollar/month territory
 - Becomes critical from Phase 4 (external users) onward
-- Embedding-based repetition detection (LON-40), watchlist triggers (LON-36), caching, etc.
+- Open follow-ups: embedding-based repetition detection (LON-40), watchlist triggers (LON-36), prompt caching
 
 ### SystemActor → proper auth (LON-15)
 - Must migrate before any external API exposure (JSON API/GraphQL)
 - Right before Phase 4 entry is the appropriate moment
 
 ### Infrastructure / ops
-- Deployment environment (Fly.io etc.) — just before Phase 4
-- Monitoring / logging — just before Phase 4
+- Deployment environment (Fly.io — LON-126 epic) — **on hold**, LON-127 sub-ticket cancelled 2026-05-13. Resume when solo daily-use is steady-state (essentially now, but trader hasn't given the green light)
+- Operational telemetry — wired (LON-161 + LON-168/169 land it on LiveDashboard + dev console)
+- Backpressure policy consolidated in `docs/architecture.md` (LON-161)
 - Backup / disaster recovery — Phase 5 timeframe
+
+### Paid data unlock — the dormant value lever
+- Free-tier news (Finnhub, Alpaca, SEC EDGAR) populates the pipeline but doesn't move trading decisions on its own
+- Phase 5 negotiation targets (Benzinga / Polygon / PR Newswire) are exactly what the NewsAnalysis surface needs to start winning
+- Roadmap thesis: build the infra now, switch the source then, instant ROI on accumulated work
+
+---
+
+## 2026-05 progress snapshot
+
+### Dilution epic (LON-131, parent LON-106) — shipped end-to-end this month
+1. **Phase 0** (LON-133): IWM CSV baseline + SEC EDGAR top-up → `SmallCapUniverse` membership table (~1,917 active members)
+2. **Phase 1** (LON-134): `Filings.Analyzer` two-tier split — cheap `extract_keywords` + deterministic `score_severity`
+3. **Phase 2** (LON-135): `FilingAnalysisWorker` runs Tier 1 over the universe every 15 min; per-run + today-total cost telemetry
+4. **Phase 3a** (LON-136): `FilingSeverityWorker` background sweep promotes Tier 1 rows to fully scored every 5 min
+5. **Phase 3b** (LON-162): live read from `get_dilution_profile/1` across `/feed`, `/`, `/morning`, `/analyze` + PubSub re-render
+
+### Real-data baseline + hotfix bursts (2026-05-15)
+- **LON-163**: SystemActor wiring fix + `AI.call/3` retry-with-backoff on 429
+- **LON-164**: `SectionFilter` dedup — TOC + body + cross-reference chunks were inflating Tier 1 input tokens 3-5×
+- **LON-165**: Oban unique constraint on `FilingAnalysisWorker` — prevents concurrent Tier 1 batches from compounding rate-limit hits
+- **LON-167**: `FinnhubProfileSync` symbol source expanded from `tracked_tickers.txt` (~29) to the union of that + active small-cap universe (~1,941). Daily 05:00 UTC.
+- **LON-170**: `/feed` price/float filter no longer crashes / drops ticker selection on form change
+
+### Operational observability (2026-05-15)
+- **LON-161**: Tier 1 ingest health daily reporter (06:00 UTC) + per-event CIK-drop telemetry + consolidated backpressure table in `architecture.md`
+- **LON-67**: `FinnhubStream` graceful shutdown + smart reconnect (429 → stop, transient → exp backoff + cap) + lifecycle telemetry
+- **LON-168/169**: 65 metrics across 28 events wired into `LongOrShortWeb.Telemetry`. `ConsoleReporter` dev-only, filtered to `[:long_or_short, ...]` domain events (excludes `:repo` to avoid drowning the dev IEx)
 
 ---
 

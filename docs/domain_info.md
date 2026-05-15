@@ -1,6 +1,6 @@
 # Domain Info
 
-> Last updated: 2026-05-05
+> Last updated: 2026-05-15
 
 ## `LongOrShort.Tickers`
 
@@ -69,12 +69,16 @@ This is the **ingestion universe** — tickers we poll for news/profile data, bo
 
 ### `Tickers.Sources.FinnhubStream`
 
-`lib/long_or_short/tickers/sources/finnhub_stream.ex` — WebSocket client (`WebSockex`), LON-60
+`lib/long_or_short/tickers/sources/finnhub_stream.ex` — WebSocket client (`WebSockex`), LON-60. Robust lifecycle: LON-67.
 
-- Subscribes to all `Watchlist.symbols/0` on `wss://ws.finnhub.io`
+- Subscribes to the union of `WatchlistItem` symbols across users + `Tracked.symbols/0` fallback, capped at 50 (Finnhub free tier WebSocket limit)
 - Per trade tick: `update_ticker_price/2` + broadcast `{:price_tick, symbol, %Decimal{}}` on `"prices"` topic
+- Reactive subscription — listens on `"watchlist:any"` PubSub, diffs current vs desired set on each `{:watchlist_changed, _}` and sends subscribe/unsubscribe frame deltas (no reconnect)
 - Toggle via `:enable_price_stream` (default `true`)
-- Free tier limit: 50 subscriptions
+- **Lifecycle (LON-67)**:
+  - `terminate/2` sends `unsubscribe` frames + a WebSocket close frame before exit (best-effort) so app restart doesn't leave a zombie connection
+  - `handle_disconnect/2` buckets reasons via `classify_reason/1` — persistent (`429`, `401/403` upgrade) → return `{:ok, state}` so the supervisor decides; transient (`{:remote, _}`, `502`, network) → `Process.sleep(backoff_ms(attempt))` then `:reconnect`, capped at 5 attempts
+  - Telemetry: `[:long_or_short, :finnhub_stream, :disconnected | :reconnected]` with `reason_bucket` metadata
 
 ### `Tickers.Sources.IndicesPoller`
 
@@ -86,11 +90,179 @@ This is the **ingestion universe** — tickers we poll for news/profile data, bo
 
 ### `Tickers.Workers.FinnhubProfileSync`
 
-`lib/long_or_short/tickers/workers/finnhub_profile_sync.ex` — Oban Cron, daily 05:00 UTC (LON-59)
+`lib/long_or_short/tickers/workers/finnhub_profile_sync.ex` — Oban Cron, daily 05:00 UTC (LON-59, scope expanded LON-167)
 
 - Syncs `Ticker` master fields from Finnhub `/stock/profile2`
 - Field mapping: `name → company_name`, `exchange` (mapped to enum), `finnhubIndustry → industry`, `shareOutstanding × 1M → shares_outstanding/float_shares`
-- Per-symbol 1.2s pause (60 req/min budget); per-symbol failures logged, cycle continues
+- **Symbol source (LON-167)**: union of `Tickers.Tracked.symbols/0` (manual watchlist ~29) and `Tickers.small_cap_symbols/0` (active IWM-derived universe ~1,917). Deduped, ~1,941 unique calls per cycle.
+- Per-symbol 1.2s pause (60 req/min budget); cycle takes ~38 min; per-symbol failures logged, cycle continues
+
+### `Tickers.SmallCapUniverseMembership`
+
+`lib/long_or_short/tickers/small_cap_universe_membership.ex` — table `small_cap_universe_memberships` (LON-133)
+
+The IWM-derived small-cap universe over which Tier 1 dilution analysis runs. One row per `(ticker_id, source)` (e.g. `:iwm`); `is_active = false` flags soft-deletions (delisting / rebalance).
+
+#### Identity
+`:unique_ticker_source` on `[:ticker_id, :source]`
+
+#### Key actions
+- `:upsert` — adds or reactivates a membership row
+- `:deactivate` — soft delete (bulk-action friendly for rebalance sweeps)
+- `:list_active` — returns active rows with `:ticker` loaded
+
+#### Code interface (on `LongOrShort.Tickers` domain)
+```elixir
+upsert_small_cap_membership/1
+list_active_small_cap_memberships/0
+small_cap_symbols/0                    # convenience: active uppercased symbols
+small_cap_ticker_ids/0                 # convenience: active ticker UUIDs
+```
+
+Refreshed weekly by `Tickers.Workers.IwmUniverseSync` (Mondays 06:00 UTC).
+
+### `Tickers.DilutionProfile` (read-only aggregate)
+
+`lib/long_or_short/tickers/dilution_profile.ex` — computed via `get_dilution_profile/1` (LON-116)
+
+Per-ticker dilution overhang summary built from `FilingAnalysis` rows. Combines a 180-day window (configurable) for most filing types with full lifecycle tracking for ATM agreements (`ATM facility status`, `pending_s1`, `warrant_overhang`, `recent_reverse_split`, `insider_selling_post_filing`).
+
+Shape: `%{ticker_id, overall_severity, overall_severity_reason, flags, active_atm, pending_s1, warrant_overhang, recent_reverse_split, insider_selling_post_filing, last_filing_at, data_completeness}` where `data_completeness ∈ [:full, :insufficient]`.
+
+Consumed by `/feed`, dashboard cards, `/morning`, `/analyze` (LON-162) — live read, no snapshot column.
+
+### `Tickers.Workers.IwmUniverseSync`
+
+`lib/long_or_short/tickers/workers/iwm_universe_sync.ex` — Oban Cron, weekly Monday 06:00 UTC (LON-133)
+
+Refreshes the small-cap universe from iShares' IWM holdings CSV. Adds new R2K members, deactivates dropped ones.
+
+### `Tickers.WatchlistEvents` / `Tickers.WatchlistItem`
+
+`watchlist_item.ex` + `watchlist_events.ex` — per-user dynamic watchlist (LON-90/92). Drives the `FinnhubStream` subscription set (LON-60) and any watchlist-scoped UI surface.
+
+---
+
+## `LongOrShort.Filings`
+
+Dilution-relevant SEC filings (S-1, S-3, 424B*, 8-K, DEF 14A, Form 4) and their derived analyses. Parent epic: LON-106; current architecture from the two-tier dilution epic (LON-131).
+
+### `Filing`
+
+`lib/long_or_short/filings/filing.ex` — table `filings`
+
+Per-filing metadata ingested from the SEC EDGAR `getcurrent` Atom feed.
+
+#### Attributes
+- `:id` — `uuid_v7`
+- `:source` — atom, currently always `:sec_edgar`
+- `:filing_type` — atom enum: `[:s1, :s1a, :s3, :s3a, :_424b1..b5, :_8k, :_13d, :_13g, :def14a, :form4]`
+- `:filing_subtype` — string (e.g. `"8-K Item 3.02"`); populated for 8-K from summary parsing
+- `:external_id` — SEC accession number
+- `:filer_cik` — zero-padded 10-digit CIK
+- `:filed_at` — utc_datetime, from Atom entry
+- `:fetched_at` — utc_datetime, set on ingest
+- `:url` — link to the SEC archive index
+
+#### Identity
+`:unique_filing` on `[:source, :external_id]`
+
+#### Code interface
+```elixir
+ingest_filing/1                        # used by the feeder pipeline
+ingest_filing_as_system/1              # wraps with SystemActor (LON-163)
+get_filing/1
+list_filings_for_ticker/1
+get_filing_analysis_by_filing/1
+```
+
+### `FilingRaw`
+
+`lib/long_or_short/filings/filing_raw.ex` — table `filings_raw`
+
+Cold body storage for the filing — preserves the raw HTML/text fetched from SEC after `FilingBodyFetcher` lands it (LON-119). One row per `:filing_id`.
+
+### `FilingAnalysis`
+
+`lib/long_or_short/filings/filing_analysis.ex` — table `filing_analyses`
+
+Two-tier dilution output (LON-131).
+
+**Tier 1 attributes** — extracted by LLM via `Filings.extract_keywords/1`:
+- `:dilution_type` — atom: `[:atm, :pipe, :convertible, :warrant, :registered_direct, :public_offering, :reverse_split, :other]`
+- `:deal_size_usd`, `:share_count`, `:pricing_method`, `:pricing_discount_pct`, `:warrant_strike`, `:warrant_term_years`
+- `:atm_remaining_shares`, `:atm_total_authorized_shares`
+- `:shelf_total_authorized_usd`, `:shelf_remaining_usd`
+- `:convertible_conversion_price`
+- `:has_anti_dilution_clause`, `:has_death_spiral_convertible`, `:is_reverse_split_proxy`, `:reverse_split_ratio`
+- `:summary` — LLM-written one-line description
+- `:extracted_keywords` — raw structured map (preserved for downstream / debug)
+- `:provider`, `:model`, `:raw_response`, `:analyzed_at`, `:extraction_quality`, `:rejected_reason`
+
+**Tier 2 attributes** — added by deterministic `Filings.Scoring` after Tier 1:
+- `:dilution_severity` — atom: `[:severe, :high, :medium, :low, :none]`
+- `:matched_rules` — list of rule atoms that fired
+- `:severity_reason` — human-readable explanation
+- `:flags` — list of badges (`:death_spiral`, `:variable_pricing`, etc.)
+
+#### Identity
+`:unique_filing_analysis` on `[:filing_id]` — one row per filing, upsert-over
+
+#### Key actions
+- `:upsert_tier_1` — Tier 1 fields only (LON-134)
+- `:upsert_tier_2` — Tier 2 fields only
+- `:get_by_filing` — `get?: true`
+
+### `InsiderTransaction`
+
+`lib/long_or_short/filings/insider_transaction.ex` — table `insider_transactions`
+
+Per-Form-4 insider trade rows (LON-118). Parsed directly from Form 4 XML by `Form4Parser` — no LLM. Linked to a `Filing` and the underlying `Ticker`. Cross-referenced against Tier 1 dilution events by `InsiderCrossReference` to surface "insiders sold N days after the S-3 filing" patterns.
+
+### Filings ingestion pipeline
+
+Mirror of the News pipeline shared via `LongOrShort.Sources.PipelineHelpers` (LON-142).
+
+- **`Filings.Sources.SecEdgar`** — feeder GenServer polling SEC EDGAR `getcurrent` Atom per filing type (LON-111)
+- **`Filings.Sources.Pipeline`** — wraps `PipelineHelpers` with a configurable `ingest_fun` sink
+- **`Filings.SourceSupervisor`** — children from `:enabled_filing_sources` config
+- **`Filings.SectionFilter`** — per-filing-type preprocessor that picks the dilution-relevant sections of the body before LLM (LON-113, deduped by header in LON-164)
+
+### Workers
+
+- `Filings.Workers.FilingBodyFetcher` — hourly :15 cron, batches ~100/cycle, sequential SEC fetches with rate-limit pacing (LON-119)
+- `Filings.Workers.FilingAnalysisWorker` — every 15 min cron, Tier 1 over the small-cap universe; cost telemetry; Oban unique constraint blocks concurrent runs (LON-135 + LON-165)
+- `Filings.Workers.FilingSeverityWorker` — every 5 min cron, Tier 2 background sweep promotes Tier-1-only rows to scored (LON-136)
+- `Filings.Workers.Form4Worker` — hourly :30 cron, XML → InsiderTransaction (LON-118)
+- `Filings.Workers.FilingAnalysisBackfillWorker` — on-demand bulk re-analysis (deferrable Phase 4, LON-137)
+- `Filings.Workers.IngestHealthReporter` — daily 06:00 UTC, surfaces 24h aggregate of `FilingAnalysis` rejection rate + CIK drop counters (LON-161)
+
+### `Filings.IngestHealth`
+
+`lib/long_or_short/filings/ingest_health.ex` — public, named ETS counter for CIK-resolution drops (LON-161).
+
+- Boot-time `init/0` creates `:filings_ingest_health` table; `attach_telemetry_handler/0` registers a handler on `[:long_or_short, :filings, :cik_drop]`
+- Both `News.Sources.SecEdgar` and `Filings.Sources.SecEdgar` emit the event on every unmapped CIK with `%{source: :news | :filings, cik: cik}` metadata
+- `read_and_reset_cik_drops/0` is the primary consumer (IngestHealthReporter); `peek_cik_drops/0` for debug
+- Reason classification (`:dup_cik` / `:unmapped_cik` / `:other`) is deferred to LON-132
+
+### Filings.Events / Filings.Severity / Filings.AtmLifecycle
+
+- `Filings.Events` — PubSub wrapper for `"filings:analyses"` topic. Publishers: `Filings.Analyzer` (after Tier 1) and `FilingSeverityWorker` (after Tier 2). Subscribers: `FeedLive`, `DashboardLive`, `MorningBriefLive`, `AnalyzeLive` for live dilution badge refresh (LON-162).
+- `Filings.SeverityRules` — deterministic rule catalogue. Tier 2 inputs the Tier-1 keywords + ticker context (shares_outstanding when available) and outputs severity + matched rules.
+- `Filings.AtmLifecycle` — ATM facility state aggregator powering `DilutionProfile.active_atm`.
+
+---
+
+## `LongOrShort.MorningBrief`
+
+Not an Ash domain (no resources) — three modules that produce the daily catalyst digest. Parent epic: LON-147.
+
+- **`MorningBrief.Generator`** — synchronous orchestrator. Builds the prompt, calls Claude Sonnet 4.6 with the Anthropic web_search tool, persists the brief, broadcasts `{:morning_brief_generated, brief}` on the morning-brief topic, emits cost telemetry (`:morning_brief, :generated` / `:generation_failed`).
+- **`MorningBrief.CronWorker`** — Oban Cron, fires every 15 min UTC; the worker itself filters down to the three ET wall-clock windows (premarket 05:00 / after-open 08:45 / mid-morning 10:15) on weekdays.
+- **`MorningBrief.Prompts`** — prompt builder with persona injection from `TradingProfile`. Distinct prompts per window (premarket = "what's setting up overnight" vs after-open = "what's actually moving" vs mid-morning = "where's the day going").
+
+The brief itself is persisted as an Ash resource on the parent `LongOrShort` ash_domains list — see `LongOrShortWeb.MorningBriefLive` for the consumer surface.
 
 ---
 
@@ -421,8 +593,14 @@ Domains registered in `config :long_or_short, :ash_domains`:
   LongOrShort.News,
   LongOrShort.Tickers,
   LongOrShort.Sources,
-  LongOrShort.Analysis
+  LongOrShort.Analysis,
+  LongOrShort.Filings,
+  LongOrShort.Settings
 ]
 ```
 
-`Sec` and `Indices` are not Ash domains — they're plain modules.
+Plain modules (not Ash domains):
+- `LongOrShort.Sec` — CIK mapping (`CikMapper` + `CikSyncWorker`)
+- `LongOrShort.Indices` — `Indices.Events` PubSub wrapper
+- `LongOrShort.MorningBrief` — Generator + CronWorker + Prompts (the brief is persisted via a different domain)
+- `LongOrShort.AI` — provider behaviour + facade; implementations under `AI.Providers.*` (currently `Claude`, `Qwen`, `MockProvider`)

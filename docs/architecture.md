@@ -1,6 +1,6 @@
 # Architecture
 
-> Last updated: 2026-05-05
+> Last updated: 2026-05-15
 
 ## High-level data flows
 
@@ -79,23 +79,39 @@ The analyzer is **synchronous** — the LiveView awaits the result and renders i
 
 ## Application supervision tree
 
+Before children start, `Application.start/2` runs two side effects (LON-161):
+1. `Filings.IngestHealth.init/0` — creates the named ETS counter for CIK drops
+2. `Filings.IngestHealth.attach_telemetry_handler/0` — registers the increment handler on `[:long_or_short, :filings, :cik_drop]`
+
+So the very first drop after boot is counted.
+
 ```
 LongOrShort.Application (one_for_one)
-├── LongOrShortWeb.Telemetry
+├── LongOrShortWeb.Telemetry                  # Telemetry supervisor — children:
+│   ├── :telemetry_poller (10s period)
+│   └── Telemetry.Metrics.ConsoleReporter     # dev-only, filtered to :long_or_short events (LON-168/169)
 ├── LongOrShort.Repo                          # PostgreSQL connection pool
-├── DNSCluster                                # Multi-node clustering
-├── Oban (via AshOban)                        # Cron scheduler
-│   ├── 04:00 UTC → Sec.CikSyncWorker         # CIK↔ticker refresh (LON-57)
-│   └── 05:00 UTC → Tickers.Workers.FinnhubProfileSync  # Profile enrichment (LON-59)
-├── Phoenix.PubSub (LongOrShort.PubSub)       # Pub/sub backbone
-├── LongOrShort.News.Dedup                    # ETS-based pre-DB dedup
-├── LongOrShort.News.SourceSupervisor         # Owns all News.Source feeders
-│   └── (children loaded from :enabled_news_sources config)
-├── Task.Supervisor                           # Reserved for analysis fan-out
-│   (LongOrShort.Analysis.TaskSupervisor)
+├── LongOrShort.Settings.Loader               # boot-time hydration of admin-tunable settings (LON-125)
+├── DNSCluster
+├── Oban (via AshOban)                        # Cron + queue scheduler
+│   ├── 04:00 UTC → Sec.CikSyncWorker                      # CIK ↔ ticker (LON-57)
+│   ├── 05:00 UTC → Tickers.Workers.FinnhubProfileSync     # Profile + shares_outstanding (LON-59/167)
+│   ├── 06:00 UTC → Filings.Workers.IngestHealthReporter   # 24h Tier 1 health summary (LON-161)
+│   ├── 06:00 UTC Mon → Tickers.Workers.IwmUniverseSync    # Small-cap universe refresh (LON-133)
+│   ├── :15 hourly → Filings.Workers.FilingBodyFetcher     # SEC body fetch (LON-119)
+│   ├── :30 hourly → Filings.Workers.Form4Worker           # Insider trade XML (LON-118)
+│   ├── */15 min   → Filings.Workers.FilingAnalysisWorker  # Tier 1 dilution extract (LON-135 + LON-165 unique)
+│   ├── */5  min   → Filings.Workers.FilingSeverityWorker  # Tier 2 background sweep (LON-136)
+│   ├── 0,30 hourly → News.MorningBoundaryPollWorker        # Catalyst-window force-poll (LON-152)
+│   └── */15 min   → MorningBrief.CronWorker               # Three daily ET windows (LON-149/151)
+├── Phoenix.PubSub (LongOrShort.PubSub)
+├── LongOrShort.News.Dedup                    # ETS pre-DB dedup
+├── LongOrShort.News.SourceSupervisor         # Children from :enabled_news_sources (Alpaca / Finnhub / SecEdgar / Dummy)
+├── LongOrShort.Filings.SourceSupervisor      # Children from :enabled_filing_sources (SecEdgar)
+├── Task.Supervisor (LongOrShort.Analysis.TaskSupervisor)
 ├── LongOrShortWeb.Endpoint                   # Phoenix HTTP/WebSocket
-├── AshAuthentication.Supervisor              # Token cleanup, etc.
-├── Tickers.Sources.FinnhubStream             # if :enable_price_stream (default true)
+├── AshAuthentication.Supervisor
+├── Tickers.Sources.FinnhubStream             # if :enable_price_stream (default true) — graceful shutdown via LON-67
 └── Tickers.Sources.IndicesPoller             # if :enable_indices_poller (default true)
 ```
 
@@ -174,9 +190,11 @@ Topics are wrapped by domain-specific Events modules so topic strings never appe
 |-------|---------|-----------|-------------|
 | `news:articles` | `{:new_article, %Article{}}` | `News.Sources.Pipeline` (only on new/changed content) | `FeedLive`, `DashboardLive` |
 | `analysis:article:<id>` | `{:news_analysis_ready, %NewsAnalysis{}}` | `Analysis.NewsAnalyzer` (after upsert) | `FeedLive` (article-scoped) |
-| `analysis_complete` | (legacy, no producer) | — | Removed in LON-83 |
+| `filings:analyses` | `{:new_filing_analysis, %FilingAnalysis{}}` | `Filings.Analyzer` (Tier 1) + `FilingSeverityWorker` (Tier 2) | `FeedLive`, `DashboardLive`, `MorningBriefLive`, `AnalyzeLive` — drives live dilution badge refresh (LON-162) |
 | `prices` | `{:price_tick, symbol, %Decimal{}}` | `Tickers.Sources.FinnhubStream` | `FeedLive`, `DashboardLive` (PriceLabel hook) |
 | `indices` | `{:index_tick, label, payload}` | `Tickers.Sources.IndicesPoller` | `DashboardLive` |
+| `watchlist:any` | `{:watchlist_changed, user_id}` | `Tickers.WatchlistEvents` on `WatchlistItem` mutations | `FinnhubStream` (recomputes subscription set + sends frame deltas) |
+| (morning brief topic) | `{:morning_brief_generated, brief}` | `MorningBrief.Generator` after persist | `MorningBriefLive` |
 
 Publishers go through:
 - `LongOrShort.News.Events.broadcast_new_article/1`
@@ -200,6 +218,15 @@ The pivot from RepetitionAnalysis (LON-22 epic, retired in LON-80) to NewsAnalys
 - **`LongOrShort.Analysis.Events`** — PubSub topic wrapper.
 
 Phase 1 stubs (`:pump_fade_risk`, `:strategy_match`, `:rvol_at_analysis`) are explicitly written by the analyzer — they don't come from the LLM. Phase 2 (rule-based `:strategy_match` from price/float/RVOL) and Phase 4 (`:pump_fade_risk` from a price-reactions history table) update the same row through separate code paths.
+
+### Filings analysis (two-tier dilution, LON-131)
+
+Mirrors the same AI facade but splits work explicitly between LLM and rules:
+
+- **`LongOrShort.Filings.Analyzer.extract_keywords/1`** (Tier 1) — LLM call. Cheap model (Haiku 4.5 / configured Qwen fallback). Outputs structured deal terms (`dilution_type`, `deal_size_usd`, `pricing_method`, ATM/shelf state, etc.) plus an `extraction_quality` field. Cost-controlled: section preprocessor (`SectionFilter`) cuts input tokens by header de-dup (LON-164); `AI.call/3` retries on 429 with backoff (LON-163); `FilingAnalysisWorker` is Oban-unique to prevent concurrent burst (LON-165).
+- **`LongOrShort.Filings.Analyzer.score_severity/1`** (Tier 2) — pure deterministic rules over the Tier 1 output + ticker context. No LLM. Outputs `dilution_severity`, `matched_rules`, `severity_reason`, `flags`. Runs as a background sweep via `FilingSeverityWorker` (LON-136).
+
+This split is a key architectural decision (LON-160): severity must be auditable + free, while extraction is the expensive but parallelizable LLM work. Tier 2 needs no UI gating — it just happens after Tier 1 lands and broadcasts on `"filings:analyses"`.
 
 ## Authorization model
 
