@@ -42,6 +42,13 @@ config :long_or_short, Oban,
        # severity scoring. Watchlist-scoped: cost is bounded by the
        # number of tickers traders have explicitly opted into.
        {"*/15 * * * *", LongOrShort.Filings.Workers.FilingAnalysisWorker},
+       # Every 5 min — promote Tier-1-only FilingAnalysis rows to fully
+       # scored via Filings.Scoring (LON-136, Phase 3a). Background
+       # sweep because LON-160 decided Tier 2 (currently deterministic +
+       # $0) has no cost reason to defer to user action. Faster than
+       # Tier 1's */15 so trader sees full severity within minutes of
+       # Tier 1 landing. Idempotent — filter excludes already-scored rows.
+       {"*/5 * * * *", LongOrShort.Filings.Workers.FilingSeverityWorker},
        # Hourly at :30 — parse Form 4 (insider transactions) into
        # InsiderTransaction rows (LON-118). Parallel path to the
        # LLM extraction pipeline: Form 4 is structured XML, parsed

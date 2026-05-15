@@ -483,6 +483,27 @@ defmodule LongOrShort.Filings.FilingAnalysis do
 
       prepare build(sort: [id: :desc])
     end
+
+    read :pending_tier_2 do
+      description """
+      Tier-1-only rows awaiting severity scoring (LON-136). Filter:
+      `extraction_quality == :high AND dilution_severity IS NULL`.
+      Optional `ticker_id` argument narrows to one ticker, used by the
+      `mix dilution.score_severity` calibration task. Default limit
+      matches the `FilingSeverityWorker` batch size.
+      """
+
+      argument :ticker_id, :uuid, allow_nil?: true
+
+      pagination keyset?: true, required?: false, default_limit: 100
+
+      filter expr(
+               extraction_quality == :high and is_nil(dilution_severity) and
+                 (is_nil(^arg(:ticker_id)) or ticker_id == ^arg(:ticker_id))
+             )
+
+      prepare build(sort: [analyzed_at: :asc])
+    end
   end
 
   policies do
