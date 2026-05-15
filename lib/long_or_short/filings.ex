@@ -80,6 +80,7 @@ defmodule LongOrShort.Filings do
 
       define :list_filing_analyses_by_ticker, action: :by_ticker, args: [:ticker_id]
       define :list_recent_filing_analyses, action: :recent
+      define :list_pending_tier_2_analyses, action: :pending_tier_2
       define :destroy_filing_analysis, action: :destroy
     end
 
