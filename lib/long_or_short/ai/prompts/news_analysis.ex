@@ -67,6 +67,7 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
   """
 
   alias LongOrShort.Accounts.TradingProfile
+  alias LongOrShort.AI.Prompts.Persona
 
   @typedoc """
   Minimal article shape consumed by `build/3`. Real `Article` structs
@@ -173,16 +174,16 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
     news headline + summary and produce a trading assessment by calling
     the `record_news_analysis` tool.
 
-    You are supporting a #{persona_intro(profile.trading_style)}.
+    You are supporting a #{Persona.intro(profile.trading_style)}.
 
     Trader profile:
-    #{render_profile_lines(profile)}
+    #{Persona.render_profile_lines(profile)}
 
     #{behavioral_guidance(profile.trading_style)}
     #{dilution_handling_rules()}
     Speak like a trader, not a research analyst. Korean is welcome where
     natural — the trader is bilingual.
-    #{render_notes(profile.notes)}
+    #{Persona.render_notes(profile.notes)}
     Always respond by calling the `record_news_analysis` tool. Do not
     respond in plain text.
     """
@@ -200,12 +201,6 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
     The dilution context for this ticker is in the user message under "## Dilution context".
     """
   end
-
-  defp persona_intro(:momentum_day), do: "small-cap momentum day trader"
-  defp persona_intro(:large_cap_day), do: "large-cap day trader"
-  defp persona_intro(:swing), do: "swing trader (multi-day to multi-week holds)"
-  defp persona_intro(:position), do: "position investor (multi-week to multi-month holds)"
-  defp persona_intro(:options), do: "options trader"
 
   defp behavioral_guidance(:momentum_day) do
     """
@@ -248,50 +243,16 @@ defmodule LongOrShort.AI.Prompts.NewsAnalysis do
     """
   end
 
-  # ─── Profile rendering ─────────────────────────────────────────────
+  # Persona helpers moved to `LongOrShort.AI.Prompts.Persona` (LON-172
+  # extracted them once TickerBriefing became the second consumer).
+  # Behavioral guidance below stays here — it's analysis-tone framing
+  # specific to NewsAnalysis, not generic persona description.
 
-  defp render_profile_lines(profile) do
-    base_lines = [
-      "  * Style: #{profile.trading_style}",
-      "  * Time horizon: #{profile.time_horizon}",
-      "  * Market cap focus: #{format_market_caps(profile.market_cap_focuses)}",
-      "  * Catalyst preferences: #{format_catalysts(profile.catalyst_preferences)}"
-    ]
-
-    style_lines =
-      [
-        price_band_line(profile),
-        float_line(profile)
-      ]
-      |> Enum.reject(&is_nil/1)
-
-    Enum.join(base_lines ++ style_lines, "\n")
-  end
-
-  defp format_market_caps([]), do: "any"
-  defp format_market_caps(focuses), do: Enum.join(focuses, ", ")
-
-  defp format_catalysts([]), do: "any"
-  defp format_catalysts(prefs), do: Enum.join(prefs, ", ")
-
-  defp price_band_line(%{price_min: min, price_max: max})
-       when not is_nil(min) and not is_nil(max),
-       do: "  * Stocks priced $#{min}–$#{max}"
-
-  defp price_band_line(_), do: nil
-
-  defp float_line(%{float_max: max}) when not is_nil(max),
-    do: "  * Float under #{format_shares(max)}"
-
-  defp float_line(_), do: nil
-
+  # `format_shares/1` stays in this module: it's used by dilution
+  # context rendering (active ATM, warrant overhang), not persona.
   defp format_shares(n) when n >= 1_000_000_000, do: "#{div(n, 1_000_000_000)}B"
   defp format_shares(n) when n >= 1_000_000, do: "#{div(n, 1_000_000)}M"
   defp format_shares(n), do: to_string(n)
-
-  defp render_notes(nil), do: ""
-  defp render_notes(""), do: ""
-  defp render_notes(notes), do: "\nAdditional notes:\n#{notes}\n"
 
   # ─── User message (article + past articles) ────────────────────────
 

@@ -72,7 +72,11 @@ defmodule LongOrShortWeb.TelemetryTest do
 
         # Morning Brief (LON-148 family)
         [:long_or_short, :morning_brief, :generated],
-        [:long_or_short, :morning_brief, :generation_failed]
+        [:long_or_short, :morning_brief, :generation_failed],
+
+        # Pre-Trade Briefing (LON-172)
+        [:long_or_short, :ticker_briefing, :generated],
+        [:long_or_short, :ticker_briefing, :generation_failed]
       ]
 
       missing = expected_events -- events

@@ -263,6 +263,36 @@ defmodule LongOrShortWeb.Telemetry do
       ),
       counter("long_or_short.morning_brief.generation_failed.duration_ms",
         tags: [:bucket, :reason]
+      ),
+
+      # ── Pre-Trade Briefing (LON-172) ─────────────────────────────
+      counter("long_or_short.ticker_briefing.generated.duration_ms",
+        description: "Successful briefing generation count"
+      ),
+      summary("long_or_short.ticker_briefing.generated.duration_ms",
+        tags: [:model],
+        unit: :millisecond
+      ),
+      summary("long_or_short.ticker_briefing.generated.input_tokens",
+        tags: [:model]
+      ),
+      summary("long_or_short.ticker_briefing.generated.output_tokens",
+        tags: [:model]
+      ),
+      sum("long_or_short.ticker_briefing.generated.search_calls",
+        tags: [:model]
+      ),
+      # LON-174 PT-3 prompt caching — these stay at 0 until the
+      # cache_control marker lands; registering them now means the
+      # dashboard chart exists from day one.
+      sum("long_or_short.ticker_briefing.generated.cache_creation_input_tokens",
+        tags: [:model]
+      ),
+      sum("long_or_short.ticker_briefing.generated.cache_read_input_tokens",
+        tags: [:model]
+      ),
+      counter("long_or_short.ticker_briefing.generation_failed.duration_ms",
+        tags: [:reason]
       )
 
       # ── Skipped emits ────────────────────────────────────────────
