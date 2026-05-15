@@ -74,7 +74,17 @@ defmodule LongOrShort.Filings.Workers.FilingAnalysisWorker do
   separate aggregation.
   """
 
-  use Oban.Worker, queue: :filings_analysis, max_attempts: 3
+  # Tier 1 batches can take 10-30 minutes under LON-163 retry-with-backoff
+  # if Anthropic is throttling. The */15 cron keeps firing while a previous
+  # batch is still running; without this unique constraint, queue
+  # concurrency 2 lets two Tier 1 batches execute simultaneously and burst
+  # into Anthropic's rate limit. The unique constraint dedupes any new
+  # enqueue while a prior job is still :available / :scheduled / :executing
+  # (LON-165). Effective Tier 1 concurrency = 1 regardless of queue setting.
+  use Oban.Worker,
+    queue: :filings_analysis,
+    max_attempts: 3,
+    unique: [period: :infinity, states: [:available, :scheduled, :executing]]
 
   require Ash.Query
   require Logger
