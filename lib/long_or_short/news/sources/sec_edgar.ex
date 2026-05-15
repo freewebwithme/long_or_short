@@ -22,6 +22,7 @@ defmodule LongOrShort.News.Sources.SecEdgar do
   require Logger
   import SweetXml
 
+  alias LongOrShort.Filings.IngestHealth
   alias LongOrShort.News.Sources.Pipeline
   alias LongOrShort.Tickers
 
@@ -120,6 +121,13 @@ defmodule LongOrShort.News.Sources.SecEdgar do
 
       _ ->
         Logger.debug("SecEdgar: unmapped CIK #{cik}, skipping")
+
+        :telemetry.execute(
+          IngestHealth.cik_drop_event_name(),
+          %{},
+          %{source: :news, cik: cik}
+        )
+
         {:error, :unmapped_cik}
     end
   end

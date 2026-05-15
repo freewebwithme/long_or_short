@@ -130,6 +130,32 @@ Feeders are ~6 lines of GenServer boilerplate plus three callback implementation
 ### Per-item resilience
 A bad parse or an ingest failure on one item does **not** abort the batch. Each item is logged individually. Only `fetch_news/1` returning `{:error, ...}` triggers backoff — that's the signal of a source-wide problem.
 
+## Filings ingestion pipeline (Tier 1 dilution)
+
+Mirrors the News pipeline (same `Sources.PipelineHelpers`, same `:retry_count` / backoff contract) but routes parsed filings into `Filings.ingest_filing_as_system/1`. Tier 1 dilution extraction (`FilingAnalysisWorker`, LON-135) runs as a separate Oban cron over the small-cap universe.
+
+### Consolidated backpressure policy (LON-161)
+
+Single reference for every rate-limit / backoff knob in the Tier 1 path. Update this table when any layer's policy changes — don't sprinkle the constants across module docstrings.
+
+| Layer | Limit | Pause / backoff | Failure mode |
+|-------|-------|-----------------|--------------|
+| **SEC EDGAR Atom fetch** (`Filings.Sources.SecEdgar`) | 10 req/s SEC ceiling | `@request_spacing_ms 150` (~6.7 req/s) between filing-type requests; per-cycle exponential backoff via `News.Sources.Backoff` on `fetch_filings/1` errors | Partial: logged + per-type errors carried forward; All-fail: source-wide retry via `Backoff.next_interval/2` |
+| **FilingRaw body fetch** (`FilingBodyFetcher` Oban worker) | SEC 10 req/s shared with feeder | Sequential per-cycle with the same SEC-ceiling buffer; per-job `max_attempts: 3` | `:no_primary_document` (Form 4, by design) → drop; transient HTTP → Oban retry; permanent → mark failed in source-state log |
+| **Tier 1 LLM call** (`FilingAnalysisWorker` → `AI.call/3`) | Anthropic per-model ITPM/RPM (Sonnet 4.6 / Haiku 4.5) | `@default_per_item_pause_ms 200` between items; `AI.call/3` retry-with-backoff on `{:rate_limited, n}` (max 2 retries, honors `retry-after` header — LON-163); `unique: [period: :infinity, states: [:available, :scheduled, :executing]]` blocks concurrent Tier 1 batches (LON-165) | After all retries: persist `:rejected` row with `rejected_reason: {:rate_limited, _}`; counted in daily summary (LON-161) |
+
+### Drop / rejection observability (LON-161)
+
+Two ephemeral failure modes that don't surface as `FilingAnalysis` rows are tracked separately:
+
+- **CIK drops** — both `News.Sources.SecEdgar` and `Filings.Sources.SecEdgar` resolve filer CIK → local ticker via `Tickers.get_ticker_by_cik/1`. Unmapped CIKs (mutual funds, dup-CIK multi-class shares pending LON-132, OTC tickers absent from `company_tickers.json`) emit `[:long_or_short, :filings, :cik_drop]` telemetry. A boot-attached handler accumulates per-source counts in ETS; `IngestHealthReporter` reads + resets them on the 06:00 UTC cron.
+
+  Reason classification (`:dup_cik` "expected" vs `:unmapped_cik` "bootstrap not yet run" vs `:other`) is deferred — current code only knows the boolean "unmapped." LON-132 will persist the CIK provenance needed to distinguish these.
+
+- **Tier 1 rejections** — `FilingAnalysis` rows with `extraction_quality = :rejected` are persisted on validation failure, LLM unusability, or exhausted rate-limit retries. The daily reporter aggregates the last-24h window from `filing_analyses` directly (no in-memory counter needed) and logs `rejection_rate_pct` + top-5 `rejected_reason` values.
+
+Both go through `IngestHealthReporter`'s single summary line at 06:00 UTC and a `[:long_or_short, :ingest_health, :daily_summary]` telemetry event for any downstream dashboards.
+
 ## Deduplication and broadcast gating
 
 | Layer | Storage | TTL | Scope | Purpose |
