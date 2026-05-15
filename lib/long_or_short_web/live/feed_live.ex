@@ -122,7 +122,12 @@ defmodule LongOrShortWeb.FeedLive do
   end
 
   def handle_event("filter_changed", %{"filter" => params}, socket) do
-    filter = parse_filter(params)
+    # The price/float form's payload doesn't include `ticker_id`
+    # (that's owned by the separate TickerAutocomplete widget), so
+    # we merge over the existing socket filter to preserve it.
+    # Otherwise a price/float adjustment both silently drops the
+    # ticker selection and crashes downstream (LON-170).
+    filter = parse_filter(params, socket.assigns.filter)
 
     socket =
       socket
@@ -484,8 +489,9 @@ defmodule LongOrShortWeb.FeedLive do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp parse_filter(params) do
+  defp parse_filter(params, existing) do
     %{
+      ticker_id: Map.get(existing, :ticker_id),
       price_min: parse_decimal(params["price_min"]),
       price_max: parse_decimal(params["price_max"]),
       float_max: parse_float_millions(params["float_max"])
