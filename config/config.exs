@@ -218,7 +218,7 @@ config :long_or_short, :enabled_filing_sources, []
 #      no code change required.
 #
 # Same pattern as `:ai_provider` below.
-config :long_or_short, :filings_ingest_fun, &LongOrShort.Filings.ingest_filing/1
+config :long_or_short, :filings_ingest_fun, &LongOrShort.Filings.ingest_filing_as_system/1
 
 # Form types polled by LongOrShort.Filings.Sources.SecEdgar.
 # Each atom must be a key in SecEdgar's `@form_type_map`.

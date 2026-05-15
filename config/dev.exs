@@ -116,3 +116,13 @@ config :long_or_short,
     LongOrShort.News.Sources.Finnhub,
     LongOrShort.News.Sources.SecEdgar
   ]
+
+# Dilution-aware filings ingestion (LON-106 epic).
+# Briefly enabled 2026-05-15 to gather a real-data baseline (1 batch =
+# ~$0.21, ~82% Sonnet, 35% rejection rate — all higher than projected).
+# Disabled pending LLM-cost optimization investigation:
+#   1. Sonnet-vs-Haiku routing (why so much Sonnet?)
+#   2. Prompt caching engagement (no measurable reduction)
+#   3. Extraction rejection root cause (35% rejected/skipped)
+# Re-enable by adding LongOrShort.Filings.Sources.SecEdgar back here.
+config :long_or_short, :enabled_filing_sources, []
