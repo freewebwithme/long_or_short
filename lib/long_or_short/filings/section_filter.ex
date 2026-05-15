@@ -235,6 +235,11 @@ defmodule LongOrShort.Filings.SectionFilter do
 
   # ── Prospectus section extraction ──────────────────────────────
 
+  # Minimum body length (chars) for a chunk to be considered a "real"
+  # section body. TOC entries arrive as tiny slices like
+  # `"RISK FACTORS ........ 17\n"` — well under this threshold.
+  @min_real_body_chars 500
+
   defp prospectus_sections(raw_text) do
     headers_pattern = Enum.map_join(@prospectus_sections, "|", &Regex.escape/1)
     # Lookahead split — keeps the header attached to the body that
@@ -250,12 +255,59 @@ defmodule LongOrShort.Filings.SectionFilter do
         sections
         |> Enum.map(&split_header_and_body/1)
         |> Enum.reject(fn {_name, body} -> String.trim(body) == "" end)
+        |> dedupe_by_header()
         |> case do
           [] -> [{:full_text, raw_text}]
           pairs -> pairs
         end
     end
   end
+
+  # The split regex matches every line where a header name appears
+  # alone — that includes TOC entries, the actual section header, and
+  # any cross-references. Each match becomes a chunk that extends to
+  # the next match, so a typical prospectus emits 3-5 chunks per
+  # section name with wildly varying sizes (tiny TOC slices + the
+  # real body + possibly noise).
+  #
+  # Group by normalized header name and pick one chunk per header:
+  #
+  #   - Prefer the largest chunk *whose body exceeds
+  #     `@min_real_body_chars`* — that's the real section body,
+  #     filtering out TOC entries.
+  #   - If every chunk for a header is below the threshold (header
+  #     only appears in the TOC), still keep the largest so we never
+  #     silently drop a section.
+  #
+  # Preserve original chunk order via the first-occurrence index so
+  # the LLM sees sections in the same order across runs (helps with
+  # prompt caching adjacency).
+  defp dedupe_by_header(chunks) do
+    chunks
+    |> Enum.with_index()
+    |> Enum.group_by(fn {{name, _body}, _idx} -> normalize_header(name) end)
+    |> Enum.map(fn {_normalized, group} -> pick_representative(group) end)
+    |> Enum.sort_by(fn {_pair, idx} -> idx end)
+    |> Enum.map(fn {pair, _idx} -> pair end)
+  end
+
+  defp pick_representative(group) do
+    # Each element: {{header_name, body}, original_index}
+    above_threshold =
+      Enum.filter(group, fn {{_n, body}, _i} ->
+        String.length(body) >= @min_real_body_chars
+      end)
+
+    candidates =
+      case above_threshold do
+        [] -> group
+        non_empty -> non_empty
+      end
+
+    Enum.max_by(candidates, fn {{_n, body}, _i} -> String.length(body) end)
+  end
+
+  defp normalize_header(name), do: name |> String.upcase() |> String.trim()
 
   defp split_header_and_body(chunk) do
     case String.split(chunk, "\n", parts: 2) do

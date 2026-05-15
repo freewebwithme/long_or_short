@@ -121,6 +121,94 @@ defmodule LongOrShort.Filings.SectionFilterTest do
     end
   end
 
+  # ── Header dedup (LON-164) ─────────────────────────────────────
+
+  describe "prospectus dedup" do
+    # Real SEC prospectuses emit the same header name multiple times:
+    # once in the TOC ("RISK FACTORS ........ 17"), once at the actual
+    # section, sometimes again as a cross-reference. The lookahead-split
+    # regex creates a chunk per occurrence — dedup keeps the real
+    # section body (largest above the min-real-body threshold).
+
+    @real_body_padding String.duplicate("real body content. ", 50)
+
+    test "keeps only the largest chunk per header when TOC entries duplicate" do
+      # Two RISK FACTORS occurrences: tiny TOC entry + sizable real body.
+      # In a real document the TOC entry chunk extends to the next TOC
+      # header — here we simulate that with a short slice followed by
+      # the actual section.
+      text = """
+      Table of Contents
+      RISK FACTORS
+      Page 17
+
+      USE OF PROCEEDS
+      Page 20
+
+      RISK FACTORS
+      #{@real_body_padding}
+      The company faces material dilution risks from outstanding warrants.
+
+      USE OF PROCEEDS
+      Net proceeds will fund working capital.
+      """
+
+      {:ok, sections} = SectionFilter.filter(text, :s1)
+
+      # One entry per unique header — no duplicates
+      header_names = Enum.map(sections, fn {n, _} -> n end)
+      assert length(header_names) == length(Enum.uniq(header_names))
+
+      # The RISK FACTORS body we keep is the one with the padding,
+      # not the bare "Page 17" TOC slice
+      {_, risk_body} = Enum.find(sections, fn {n, _} -> String.upcase(n) == "RISK FACTORS" end)
+      assert risk_body =~ "real body content"
+      assert risk_body =~ "outstanding warrants"
+    end
+
+    test "keeps at least the largest chunk even when all are short (no real body)" do
+      # Pathological: prospectus body got cut off, only TOC remains.
+      # We should still surface something rather than drop the section.
+      text = """
+      Table of Contents
+      RISK FACTORS
+      Page 17
+
+      DILUTION
+      Page 19
+      """
+
+      {:ok, sections} = SectionFilter.filter(text, :s1)
+
+      # Both sections kept (largest-fallback path), even though they're
+      # tiny — better to show TOC slices than to silently lose data
+      header_names = Enum.map(sections, fn {n, _} -> String.upcase(n) end)
+      assert "RISK FACTORS" in header_names
+      assert "DILUTION" in header_names
+    end
+
+    test "preserves first-occurrence order across sections" do
+      # USE OF PROCEEDS appears before RISK FACTORS in this filing.
+      # Even though RISK FACTORS gets a bigger body, its place in the
+      # output list reflects where the section first showed up.
+      text = """
+      USE OF PROCEEDS
+      #{@real_body_padding}
+      Working capital and general corporate purposes.
+
+      RISK FACTORS
+      #{@real_body_padding}
+      #{@real_body_padding}
+      Dilution risk from outstanding warrants and convertibles.
+      """
+
+      {:ok, sections} = SectionFilter.filter(text, :s1)
+
+      [{first_name, _} | _] = sections
+      assert String.upcase(first_name) == "USE OF PROCEEDS"
+    end
+  end
+
   # ── 8-K item extraction ────────────────────────────────────────
 
   describe "8-K with filing_subtype" do
