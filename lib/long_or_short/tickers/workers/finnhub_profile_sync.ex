@@ -22,9 +22,13 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
 
   ## Cadence
 
-  Daily, registered via `Oban.Plugins.Cron`. Active-ticker counts are
-  small for the MVP, comfortably within the free-tier 60 req/min budget;
-  we run serially with a small pause between calls.
+  Daily at 05:00 UTC, registered via `Oban.Plugins.Cron`. Symbol set is
+  the union of `LongOrShort.Tickers.Tracked.symbols/0` (manual watchlist
+  in `priv/tracked_tickers.txt`) and `LongOrShort.Tickers.small_cap_symbols/0`
+  (active IWM-derived small-cap universe — LON-167). With the small-cap
+  set included, ~1,900 symbols × 1.2s pause ≈ 38min per cycle, well
+  within the free-tier 60 req/min budget. Per-symbol failures are
+  non-fatal (see Robustness).
 
   ## Robustness
 
@@ -53,7 +57,7 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
   end
 
   defp run_sync(api_key) do
-    symbols = LongOrShort.Tickers.Tracked.symbols()
+    symbols = sync_symbols()
     total = length(symbols)
 
     Logger.info("FinnhubProfileSync: starting sync for #{total} tracked symbols")
@@ -82,6 +86,16 @@ defmodule LongOrShort.Tickers.Workers.FinnhubProfileSync do
     )
 
     :ok
+  end
+
+  # Union of the manual watchlist and the active small-cap universe.
+  # Tracked.symbols/0 keeps any operator-curated tickers that aren't
+  # IWM members; small_cap_symbols/0 brings in the analysis universe so
+  # `shares_outstanding` is populated for the tickers Tier 1 dilution
+  # extraction actually runs on (LON-167).
+  defp sync_symbols do
+    (LongOrShort.Tickers.Tracked.symbols() ++ LongOrShort.Tickers.small_cap_symbols())
+    |> Enum.uniq()
   end
 
   defp sync_one(symbol, api_key) do
