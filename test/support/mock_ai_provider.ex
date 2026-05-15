@@ -68,6 +68,7 @@ defmodule LongOrShort.AI.MockProvider do
   @behaviour LongOrShort.AI.Provider
 
   @stub_key {__MODULE__, :stub}
+  @search_stub_key {__MODULE__, :search_stub}
   @table __MODULE__.Calls
 
   @doc """
@@ -87,19 +88,52 @@ defmodule LongOrShort.AI.MockProvider do
 
   @impl LongOrShort.AI.Provider
   def call(messages, tools, opts) do
-    owner = owner_pid()
+    owner = owner_pid(@stub_key)
+    # Untagged 3-tuple — legacy contract that tests pattern-match
+    # directly as `[{messages, tools, opts}]`. Don't tag this without
+    # updating every existing call site.
     :ets.insert(@table, {owner, {messages, tools, opts}})
 
-    case stub_for(owner) do
+    case stub_for(owner, @stub_key) do
       nil -> {:ok, %{tool_calls: [], text: nil, usage: %{}}}
       fun when is_function(fun, 3) -> fun.(messages, tools, opts)
     end
   end
 
   @doc """
-  Set the stub function for the current process. The stub is visible
-  to any descendant process spawned via mechanisms that propagate
-  `:"$callers"` (Task, Task.Supervisor, Phoenix.LiveViewTest, …).
+  Quacks like `LongOrShort.AI.Providers.Claude.call_with_search/2`.
+  Returns `{:ok, %{text, citations, usage, search_calls}}` from the
+  stub set via `stub_search/1`, or a benign default if no stub is set.
+
+  Use this when the code under test goes through a `:morning_brief_provider`
+  / `:research_briefing_provider` config flip pointed at MockProvider.
+
+  Recordings are stored as 2-tuples `{messages, opts}`, distinguishable
+  from `call/3`'s 3-tuples by `tuple_size/1` — see `search_calls/0`.
+  """
+  def call_with_search(messages, opts) do
+    owner = owner_pid(@search_stub_key)
+    :ets.insert(@table, {owner, {messages, opts}})
+
+    case stub_for(owner, @search_stub_key) do
+      nil ->
+        {:ok,
+         %{
+           text: "",
+           citations: [],
+           usage: %{input_tokens: 0, output_tokens: 0},
+           search_calls: 0
+         }}
+
+      fun when is_function(fun, 2) ->
+        fun.(messages, opts)
+    end
+  end
+
+  @doc """
+  Set the tool-use `call/3` stub for the current process. Visible to
+  descendant processes that propagate `:"$callers"` (Task,
+  Task.Supervisor, Phoenix.LiveViewTest, …).
   """
   @spec stub((list(), list(), keyword() -> {:ok, map()} | {:error, term()})) :: :ok
   def stub(fun) when is_function(fun, 3) do
@@ -108,10 +142,24 @@ defmodule LongOrShort.AI.MockProvider do
   end
 
   @doc """
-  Return the list of calls made under the current process's ownership,
-  oldest first.
+  Set the `call_with_search/2` stub for the current process. Separate
+  key from `stub/1` so a single test can pre-set both behaviours
+  without one clobbering the other.
   """
-  @spec calls() :: [{list(), list(), keyword()}]
+  @spec stub_search((list(), keyword() -> {:ok, map()} | {:error, term()})) :: :ok
+  def stub_search(fun) when is_function(fun, 2) do
+    Process.put(@search_stub_key, fun)
+    :ok
+  end
+
+  @doc """
+  Return all calls made under the current process's ownership, oldest
+  first. Each entry is an untagged tuple — `{messages, tools, opts}`
+  for `call/3` (3-tuple) or `{messages, opts}` for `call_with_search/2`
+  (2-tuple). Distinguish by `tuple_size/1` or use `search_calls/0`
+  for the filtered view.
+  """
+  @spec calls() :: [tuple()]
   def calls do
     @table
     |> :ets.lookup(self())
@@ -119,12 +167,22 @@ defmodule LongOrShort.AI.MockProvider do
   end
 
   @doc """
-  Clear stub and call history for the current process. Call from
-  test setup so each test starts clean.
+  Filtered helper: only the `call_with_search/2` invocations, oldest
+  first. Each entry is `{messages, opts}`.
+  """
+  @spec search_calls() :: [{list(), keyword()}]
+  def search_calls do
+    Enum.filter(calls(), fn t -> tuple_size(t) == 2 end)
+  end
+
+  @doc """
+  Clear both stubs and call history for the current process. Call
+  from test setup so each test starts clean.
   """
   @spec reset() :: :ok
   def reset do
     Process.delete(@stub_key)
+    Process.delete(@search_stub_key)
     :ets.delete(@table, self())
     :ok
   end
@@ -132,17 +190,17 @@ defmodule LongOrShort.AI.MockProvider do
   # ── internals ──────────────────────────────────────────────────────
 
   # Walk [self() | $callers], return the first PID whose dictionary
-  # holds our stub key. Falls back to self() if nothing is found —
-  # that's the right behaviour when AI.call/3 is invoked directly from
-  # the test process without a stub set (e.g. asserting `calls() == []`).
-  defp owner_pid do
-    Enum.find(caller_chain(), self(), &has_stub?/1)
+  # holds the requested stub key. Falls back to self() if nothing is
+  # found — that's the right behaviour when AI.call/3 is invoked
+  # directly from the test process without a stub set.
+  defp owner_pid(key) do
+    Enum.find(caller_chain(), self(), &has_stub?(&1, key))
   end
 
-  defp stub_for(pid) do
+  defp stub_for(pid, key) do
     case Process.info(pid, :dictionary) do
       {:dictionary, dict} ->
-        case List.keyfind(dict, @stub_key, 0) do
+        case List.keyfind(dict, key, 0) do
           {_key, value} -> value
           nil -> nil
         end
@@ -152,7 +210,7 @@ defmodule LongOrShort.AI.MockProvider do
     end
   end
 
-  defp has_stub?(pid), do: stub_for(pid) != nil
+  defp has_stub?(pid, key), do: stub_for(pid, key) != nil
 
   defp caller_chain do
     [self() | Process.get(:"$callers", [])]

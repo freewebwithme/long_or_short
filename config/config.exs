@@ -152,7 +152,8 @@ config :long_or_short,
     LongOrShort.Sources,
     LongOrShort.Analysis,
     LongOrShort.Filings,
-    LongOrShort.Settings
+    LongOrShort.Settings,
+    LongOrShort.Research
   ]
 
 # Configure the endpoint
@@ -306,6 +307,14 @@ config :long_or_short, :qwen_region, :singapore
 # LON-148 will swap this to `LongOrShort.AI.Providers.QwenNative`
 # if/when the Qwen fallback path is triggered.
 config :long_or_short, :morning_brief_provider, LongOrShort.AI.Providers.Claude
+
+# Pre-Trade Briefing provider (LON-172). Same shape contract as
+# `:morning_brief_provider` — module must export `call_with_search/2`
+# returning `{:ok, %{text, citations, usage, search_calls}}`. Kept as
+# a separate config key (not aliased to morning_brief) so each surface
+# can be flipped independently when LON-148-style fallback rollouts
+# happen per-surface.
+config :long_or_short, :research_briefing_provider, LongOrShort.AI.Providers.Claude
 
 # Filing-extraction model map (LON-113).
 #
