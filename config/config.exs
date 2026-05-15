@@ -81,7 +81,16 @@ config :long_or_short, Oban,
        # CikSyncWorker (04:00) and FinnhubProfileSync (05:00) so
        # newly-added R2K tickers already have CIK + profile data
        # when this worker upserts them.
-       {"0 6 * * 1", LongOrShort.Tickers.Workers.IwmUniverseSync}
+       {"0 6 * * 1", LongOrShort.Tickers.Workers.IwmUniverseSync},
+       # Daily at 06:00 UTC — surface Tier 1 ingest health
+       # (CIK drops + FilingAnalysis rejection rate) for the
+       # previous 24h (LON-161). Reads + resets the in-memory
+       # CIK drop counter; pulls rejection aggregate from
+       # `filing_analyses`. Logs a summary line and emits
+       # `[:long_or_short, :ingest_health, :daily_summary]`
+       # telemetry. Co-runs with the weekly IwmUniverseSync
+       # on Mondays — separate jobs, no contention.
+       {"0 6 * * *", LongOrShort.Filings.Workers.IngestHealthReporter}
      ]}
   ]
 

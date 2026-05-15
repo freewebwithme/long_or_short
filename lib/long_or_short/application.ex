@@ -7,6 +7,12 @@ defmodule LongOrShort.Application do
 
   @impl true
   def start(_type, _args) do
+    # Ingest health observability (LON-161) — create the ETS counter
+    # table and attach the boot telemetry handler before any SEC EDGAR
+    # feeder starts, so the very first CIK drop after boot is counted.
+    LongOrShort.Filings.IngestHealth.init()
+    LongOrShort.Filings.IngestHealth.attach_telemetry_handler()
+
     children =
       [
         LongOrShortWeb.Telemetry,
