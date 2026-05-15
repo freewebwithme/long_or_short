@@ -573,4 +573,58 @@ defmodule LongOrShortWeb.FeedLiveTest do
       assert html =~ "Article 1"
     end
   end
+
+  describe "filter form (LON-170)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "adjusting price filter does not crash when no ticker is selected", %{conn: conn} do
+      _ticker = build_ticker(%{symbol: "PRICE", last_price: Decimal.new("5.00")})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      # Pre-LON-170: parse_filter/1 built a map without :ticker_id, so
+      # filter_to_args/1 raised KeyError on the very next access.
+      assert render_change(view, "filter_changed", %{
+               "filter" => %{
+                 "price_min" => "3.01",
+                 "price_max" => "",
+                 "float_max" => ""
+               }
+             })
+    end
+
+    test "adjusting price filter preserves a previously selected ticker", %{conn: conn} do
+      ticker = build_ticker(%{symbol: "KEEPER", last_price: Decimal.new("5.00")})
+
+      {:ok, view, _html} = live(conn, ~p"/feed")
+
+      # Step 1: pick a ticker via the autocomplete event
+      render_click(view, "ticker_filter_select", %{
+        "ticker_id" => ticker.id,
+        "symbol" => "KEEPER"
+      })
+
+      assert :sys.get_state(view.pid).socket.assigns.filter.ticker_id == ticker.id
+
+      # Step 2: now adjust a price input — pre-LON-170 this either
+      # silently dropped ticker_id or crashed entirely.
+      render_change(view, "filter_changed", %{
+        "filter" => %{
+          "price_min" => "3.01",
+          "price_max" => "",
+          "float_max" => ""
+        }
+      })
+
+      filter = :sys.get_state(view.pid).socket.assigns.filter
+      assert filter.ticker_id == ticker.id,
+             "ticker_id should survive a price-filter adjustment, got: #{inspect(filter)}"
+
+      assert Decimal.equal?(filter.price_min, Decimal.new("3.01"))
+    end
+  end
 end
