@@ -18,9 +18,19 @@ defmodule LongOrShortWeb.Telemetry do
 
   ## Reporters
 
-  Dev: `Telemetry.Metrics.ConsoleReporter` runs with a 60s period —
-  noisier-than-helpful at the default 10s, useful as a backup view
-  while LiveDashboard is open.
+  Dev: `Telemetry.Metrics.ConsoleReporter` mounts with a filtered
+  metric list (`console_metrics/0`) — only `[:long_or_short, ...]`
+  domain events, with the `:repo` subtree explicitly excluded.
+  LiveDashboard's `metrics: LongOrShortWeb.Telemetry` argument still
+  reads the full `metrics/0` so the Database / Phoenix / VM tabs
+  stay populated; only the dev-log dump is trimmed.
+
+  Reason: ConsoleReporter prints every emit of every registered
+  metric, and Phoenix/Repo events fire per-request / per-query
+  (`long_or_short.repo.query` alone produces dozens of lines per
+  second). Domain summary events (`:complete`, `:daily_summary`,
+  `:disconnected`) are the only signals worth tailing in the
+  console (LON-169).
 
   Test / prod: no reporters mounted. Tests assert metric shape only
   (via `LongOrShortWeb.TelemetryTest`); production observability is
@@ -48,12 +58,31 @@ defmodule LongOrShortWeb.Telemetry do
 
   # ConsoleReporter is dev-only — too noisy in tests, and prod will
   # get a real metrics backend (Prometheus / OTLP) at LON-126 time.
+  # We pass `console_metrics/0` (not the full `metrics/0`) so the
+  # reporter only logs domain summary events and not per-request /
+  # per-query plumbing. See LON-169.
   defp maybe_console_reporter do
     if Mix.env() == :dev do
-      [{Telemetry.Metrics.ConsoleReporter, metrics: metrics(), reporter_options: [print_summary: false]}]
+      [{Telemetry.Metrics.ConsoleReporter, metrics: console_metrics(), reporter_options: [print_summary: false]}]
     else
       []
     end
+  end
+
+  # Filter `metrics/0` to the subset that's worth tailing in the dev
+  # console. Rule: `[:long_or_short, ...]` only, with `:repo` excluded
+  # because every Ecto query emits an event (LON-169). Phoenix / VM
+  # events stay out — they're dashboard-only.
+  @doc false
+  def console_metrics do
+    metrics()
+    |> Enum.filter(fn metric ->
+      case metric.event_name do
+        [:long_or_short, :repo | _] -> false
+        [:long_or_short | _] -> true
+        _ -> false
+      end
+    end)
   end
 
   def metrics do
