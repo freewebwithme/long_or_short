@@ -267,4 +267,19 @@ defmodule LongOrShort.Filings.Workers.FilingAnalysisWorkerTest do
       refute_receive {:telemetry, :complete, _, _}, 100
     end
   end
+
+  describe "Oban unique constraint (LON-165)" do
+    test "second enqueue with same args is deduped while the first is :available" do
+      # First insert lands a fresh job.
+      {:ok, job1} = Oban.insert(FilingAnalysisWorker.new(%{}))
+      assert job1.state == "available"
+
+      # Second insert with identical args should dedup — Oban returns the
+      # existing job (`conflict?: true`). Without the unique constraint,
+      # two concurrent Tier 1 batches would race Anthropic's rate limit.
+      {:ok, job2} = Oban.insert(FilingAnalysisWorker.new(%{}))
+      assert job2.id == job1.id
+      assert job2.conflict? == true
+    end
+  end
 end
