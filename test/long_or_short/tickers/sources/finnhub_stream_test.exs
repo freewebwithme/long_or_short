@@ -164,6 +164,62 @@ defmodule LongOrShort.Tickers.Sources.FinnhubStreamTest do
     end
   end
 
+  # ── LON-67 lifecycle policy ────────────────────────────────────
+
+  describe "classify_reason/1" do
+    test "abuse-policy 429 is :persistent — reconnect would re-trigger throttling" do
+      reason = %WebSockex.RequestError{code: 429, message: "Too Many Requests"}
+      assert :persistent = FinnhubStream.classify_reason(reason)
+    end
+
+    test "auth failure (401, 403) is :persistent" do
+      for code <- [401, 403] do
+        reason = %WebSockex.RequestError{code: code, message: "auth"}
+
+        assert :persistent = FinnhubStream.classify_reason(reason),
+               "expected code #{code} to be persistent"
+      end
+    end
+
+    test "upstream 5xx is :transient — retry with backoff" do
+      reason = %WebSockex.RequestError{code: 502, message: "Bad Gateway"}
+      assert :transient = FinnhubStream.classify_reason(reason)
+    end
+
+    test "network-level disconnects are :transient" do
+      assert :transient = FinnhubStream.classify_reason({:remote, :closed})
+      assert :transient = FinnhubStream.classify_reason(:tcp_closed)
+      assert :transient = FinnhubStream.classify_reason(:closed)
+    end
+
+    test "unknown reason shapes fall back to :transient" do
+      assert :transient = FinnhubStream.classify_reason(:something_unexpected)
+      assert :transient = FinnhubStream.classify_reason({:weird, :tuple, "shape"})
+    end
+  end
+
+  describe "backoff_ms/1" do
+    test "follows the documented 1s/2s/4s/8s/16s exponential curve" do
+      assert FinnhubStream.backoff_ms(1) == 1_000
+      assert FinnhubStream.backoff_ms(2) == 2_000
+      assert FinnhubStream.backoff_ms(3) == 4_000
+      assert FinnhubStream.backoff_ms(4) == 8_000
+      assert FinnhubStream.backoff_ms(5) == 16_000
+    end
+
+    test "caps at 30s once exponential value would exceed it" do
+      # 2^5 = 32s > 30s cap → clamped
+      assert FinnhubStream.backoff_ms(6) == 30_000
+      assert FinnhubStream.backoff_ms(7) == 30_000
+      assert FinnhubStream.backoff_ms(100) == 30_000
+    end
+
+    test "non-positive attempt defaults to 1s — defensive fallback" do
+      assert FinnhubStream.backoff_ms(0) == 1_000
+      assert FinnhubStream.backoff_ms(-1) == 1_000
+    end
+  end
+
   defp restore(key, nil), do: Application.delete_env(:long_or_short, key)
   defp restore(key, value), do: Application.put_env(:long_or_short, key, value)
 
