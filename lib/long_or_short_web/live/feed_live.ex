@@ -36,7 +36,7 @@ defmodule LongOrShortWeb.FeedLive do
   use LongOrShortWeb, :live_view
 
   alias LongOrShortWeb.Format
-  alias LongOrShortWeb.Live.ArticleDedup
+  alias LongOrShortWeb.Live.{ArticleDedup, DilutionProfiles}
   alias LongOrShortWeb.Live.Components.{ArticleComponents, TickerAutocomplete}
   alias LongOrShort.{Analysis, News, Tickers}
 
@@ -47,6 +47,7 @@ defmodule LongOrShortWeb.FeedLive do
     if connected?(socket) do
       News.Events.subscribe()
       Phoenix.PubSub.subscribe(LongOrShort.PubSub, "prices")
+      DilutionProfiles.subscribe()
     end
 
     filter = empty_filter()
@@ -60,6 +61,8 @@ defmodule LongOrShortWeb.FeedLive do
       |> assign(:expanded_ids, MapSet.new())
       |> assign(:last_cursor, nil)
       |> assign(:more?, false)
+      |> assign(:dilution_profiles, %{})
+      |> assign(:articles_by_id, %{})
       |> load_articles_with_filter(filter)
 
     {:ok, socket}
@@ -92,7 +95,7 @@ defmodule LongOrShortWeb.FeedLive do
           socket =
             socket
             |> update(:analyzing_ids, &MapSet.put(&1, article_id))
-            |> stream_insert(:articles, ArticleDedup.to_row(article))
+            |> cache_row(ArticleDedup.to_row(article))
 
           {:noreply, socket}
 
@@ -200,9 +203,7 @@ defmodule LongOrShortWeb.FeedLive do
 
         socket =
           deduped
-          |> Enum.reduce(socket, fn row, sock ->
-            stream_insert(sock, :articles, row, at: -1)
-          end)
+          |> Enum.reduce(socket, fn row, sock -> cache_row(sock, row, at: -1) end)
           |> assign(:last_cursor, last_keyset(articles, socket.assigns.last_cursor))
           |> assign(:more?, more)
           |> update(:article_count, &(&1 + length(deduped)))
@@ -233,7 +234,7 @@ defmodule LongOrShortWeb.FeedLive do
 
           socket =
             socket
-            |> stream_insert(:articles, ArticleDedup.to_row(article), at: 0)
+            |> cache_row(ArticleDedup.to_row(article), at: 0)
             |> update(:article_count, &(&1 + 1))
 
           {:noreply, socket}
@@ -261,6 +262,19 @@ defmodule LongOrShortWeb.FeedLive do
       |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
       |> refresh_card(article_id)
       |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")
+
+    {:noreply, socket}
+  end
+
+  # Tier 2 promotion (LON-136) — refresh the affected ticker's profile
+  # and re-stream_insert any displayed articles for that ticker.
+  def handle_info({:new_filing_analysis, %{ticker_id: ticker_id}}, socket) do
+    refreshed = DilutionProfiles.refresh_one(socket.assigns.dilution_profiles, ticker_id)
+
+    socket =
+      socket
+      |> assign(:dilution_profiles, refreshed)
+      |> re_stream_for_ticker(ticker_id)
 
     {:noreply, socket}
   end
@@ -350,6 +364,7 @@ defmodule LongOrShortWeb.FeedLive do
               analyzing?={MapSet.member?(@analyzing_ids, article.id)}
               analyze_disabled?={is_nil(@current_user.trading_profile)}
               expanded?={MapSet.member?(@expanded_ids, article.id)}
+              dilution_profile={@dilution_profiles[article.ticker_id]}
             />
           </div>
         </div>
@@ -390,10 +405,15 @@ defmodule LongOrShortWeb.FeedLive do
 
     deduped = ArticleDedup.dedup(articles)
 
+    articles_by_id = Map.new(deduped, &{&1.id, &1})
+
     socket
     |> assign(:article_count, length(deduped))
     |> assign(:last_cursor, last_keyset(articles, nil))
     |> assign(:more?, more)
+    |> assign(:articles_by_id, articles_by_id)
+    |> assign(:dilution_profiles, %{})
+    |> load_missing_profiles(deduped)
     |> stream(:articles, deduped, reset: true)
   end
 
@@ -421,9 +441,41 @@ defmodule LongOrShortWeb.FeedLive do
            load: [:ticker, :news_analysis],
            actor: socket.assigns.current_user
          ) do
-      {:ok, article} -> stream_insert(socket, :articles, ArticleDedup.to_row(article))
+      {:ok, article} -> cache_row(socket, ArticleDedup.to_row(article))
       {:error, _} -> socket
     end
+  end
+
+  # ── LON-162 dilution-profile cache helpers ─────────────────────
+  # Stream items are freed from socket state after render
+  # (Phoenix.LiveView.stream/4 docs), so we keep a parallel
+  # `@articles_by_id` map. On `:new_filing_analysis` we look up the
+  # affected rows by ticker_id and re-stream_insert them so the card
+  # picks up the refreshed `@dilution_profiles[ticker_id]` at render
+  # time.
+
+  defp cache_row(socket, row, opts \\ []) do
+    socket
+    |> stream_insert(:articles, row, opts)
+    |> update(:articles_by_id, &Map.put(&1, row.id, row))
+    |> load_missing_profiles([row])
+  end
+
+  defp load_missing_profiles(socket, rows) do
+    ticker_ids = Enum.map(rows, & &1.ticker_id)
+
+    assign(
+      socket,
+      :dilution_profiles,
+      DilutionProfiles.ensure_loaded(socket.assigns.dilution_profiles, ticker_ids)
+    )
+  end
+
+  defp re_stream_for_ticker(socket, ticker_id) do
+    socket.assigns.articles_by_id
+    |> Map.values()
+    |> Enum.filter(&(&1.ticker_id == ticker_id))
+    |> Enum.reduce(socket, fn row, sock -> stream_insert(sock, :articles, row) end)
   end
 
   defp extract_analysis(%{news_analysis: %LongOrShort.Analysis.NewsAnalysis{} = a}), do: a

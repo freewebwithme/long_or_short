@@ -109,16 +109,23 @@ defmodule LongOrShortWeb.Live.Components.NewsComponentsTest do
 
   describe "news_card includes dilution pill" do
     test "renders the dilution pill alongside the other signals" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :high,
-          dilution_summary_at_analysis: "Recent ATM"
-        })
+      analysis = build_analysis(%{})
+
+      profile = %{
+        overall_severity: :high,
+        overall_severity_reason: "Recent ATM",
+        flags: [],
+        data_completeness: :partial
+      }
 
       html =
-        render_component(&NewsComponents.news_card/1, %{analysis: analysis, expanded?: false})
+        render_component(&NewsComponents.news_card/1, %{
+          analysis: analysis,
+          expanded?: false,
+          dilution_profile: profile
+        })
 
-      # The new pill
+      # The dilution pill from the live profile
       assert html =~ "Dilution"
       assert html =~ "HIGH"
 
@@ -128,15 +135,36 @@ defmodule LongOrShortWeb.Live.Components.NewsComponentsTest do
       assert html =~ "Strategy"
     end
 
-    test "renders unknown badge when analysis has no dilution data" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :unknown,
-          dilution_summary_at_analysis: "Unknown no dilution data"
-        })
+    test "renders unknown badge when profile is nil (LON-162)" do
+      analysis = build_analysis(%{})
 
       html =
-        render_component(&NewsComponents.news_card/1, %{analysis: analysis, expanded?: false})
+        render_component(&NewsComponents.news_card/1, %{
+          analysis: analysis,
+          expanded?: false,
+          dilution_profile: nil
+        })
+
+      assert html =~ "UNKNOWN"
+      assert html =~ "border-dashed"
+    end
+
+    test "renders unknown badge when profile is :insufficient (LON-162)" do
+      analysis = build_analysis(%{})
+
+      profile = %{
+        overall_severity: :none,
+        overall_severity_reason: nil,
+        flags: [],
+        data_completeness: :insufficient
+      }
+
+      html =
+        render_component(&NewsComponents.news_card/1, %{
+          analysis: analysis,
+          expanded?: false,
+          dilution_profile: profile
+        })
 
       assert html =~ "UNKNOWN"
       assert html =~ "border-dashed"
@@ -145,14 +173,20 @@ defmodule LongOrShortWeb.Live.Components.NewsComponentsTest do
 
   describe "news_detail dilution_section" do
     test "renders summary text and flag chips when severity is high" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :high,
-          dilution_summary_at_analysis: "HIGH dilution event with substantial overhang",
-          dilution_flags_at_analysis: [:large_overhang, :death_spiral_convertible]
-        })
+      analysis = build_analysis(%{})
 
-      html = render_component(&NewsComponents.news_detail/1, %{analysis: analysis})
+      profile = %{
+        overall_severity: :high,
+        overall_severity_reason: "HIGH dilution event with substantial overhang",
+        flags: [:large_overhang, :death_spiral_convertible],
+        data_completeness: :partial
+      }
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: profile
+        })
 
       assert html =~ "Dilution context"
       assert html =~ "substantial overhang"
@@ -161,43 +195,75 @@ defmodule LongOrShortWeb.Live.Components.NewsComponentsTest do
     end
 
     test "renders summary even when flags list is empty" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :medium,
-          dilution_summary_at_analysis: "Warrant overhang reaching strike",
-          dilution_flags_at_analysis: []
-        })
+      analysis = build_analysis(%{})
 
-      html = render_component(&NewsComponents.news_detail/1, %{analysis: analysis})
+      profile = %{
+        overall_severity: :medium,
+        overall_severity_reason: "Warrant overhang reaching strike",
+        flags: [],
+        data_completeness: :partial
+      }
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: profile
+        })
 
       assert html =~ "Dilution context"
       assert html =~ "Warrant overhang"
     end
 
-    test "renders unknown warning explicitly (no-data signal)" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :unknown,
-          dilution_summary_at_analysis: "Unknown no dilution data in last 180 days",
-          dilution_flags_at_analysis: []
+    test "hides dilution section when profile is :insufficient AND flags empty (LON-162)" do
+      analysis = build_analysis(%{})
+
+      profile = %{
+        overall_severity: :none,
+        overall_severity_reason: nil,
+        flags: [],
+        data_completeness: :insufficient
+      }
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: profile
         })
 
-      html = render_component(&NewsComponents.news_detail/1, %{analysis: analysis})
+      # LON-162: the dashed-border pill still surfaces "no data" via the
+      # compact card. The expanded detail section adds nothing when both
+      # severity and flags are empty, so we collapse it (same rule as
+      # the pre-LON-162 :none + [] case).
+      refute html =~ "Dilution context"
+    end
 
-      assert html =~ "Dilution context"
-      assert html =~ "Unknown"
-      assert html =~ "no dilution data"
+    test "hides dilution section when profile is nil (LON-162)" do
+      analysis = build_analysis(%{})
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: nil
+        })
+
+      refute html =~ "Dilution context"
     end
 
     test "hides dilution section when severity none AND flags empty" do
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :none,
-          dilution_summary_at_analysis: nil,
-          dilution_flags_at_analysis: []
-        })
+      analysis = build_analysis(%{})
 
-      html = render_component(&NewsComponents.news_detail/1, %{analysis: analysis})
+      profile = %{
+        overall_severity: :none,
+        overall_severity_reason: nil,
+        flags: [],
+        data_completeness: :high
+      }
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: profile
+        })
 
       refute html =~ "Dilution context"
     end
@@ -207,14 +273,20 @@ defmodule LongOrShortWeb.Live.Components.NewsComponentsTest do
       # severity is none (e.g. structural pattern signal but no
       # active dilution). Render the section so the trader sees the
       # flag chip.
-      analysis =
-        build_analysis(%{
-          dilution_severity_at_analysis: :none,
-          dilution_summary_at_analysis: nil,
-          dilution_flags_at_analysis: [:large_overhang]
-        })
+      analysis = build_analysis(%{})
 
-      html = render_component(&NewsComponents.news_detail/1, %{analysis: analysis})
+      profile = %{
+        overall_severity: :none,
+        overall_severity_reason: nil,
+        flags: [:large_overhang],
+        data_completeness: :high
+      }
+
+      html =
+        render_component(&NewsComponents.news_detail/1, %{
+          analysis: analysis,
+          dilution_profile: profile
+        })
 
       assert html =~ "Dilution context"
       assert html =~ "large overhang"

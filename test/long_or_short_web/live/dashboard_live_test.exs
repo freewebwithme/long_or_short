@@ -2,11 +2,12 @@ defmodule LongOrShortWeb.DashboardLiveTest do
   use LongOrShortWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import LongOrShort.{AccountsFixtures, AnalysisFixtures, NewsFixtures, TickersFixtures}
+  import LongOrShort.{AccountsFixtures, AnalysisFixtures, FilingsFixtures, NewsFixtures, TickersFixtures}
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
 
   alias LongOrShort.AI.MockProvider
   alias LongOrShort.Analysis.Events, as: AnalysisEvents
+  alias LongOrShort.Filings.Events, as: FilingsEvents
   alias LongOrShort.News
   alias LongOrShort.Tickers.WatchlistEvents
 
@@ -632,6 +633,51 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       refute html =~ "text-error"
       refute html =~ "↑"
       refute html =~ "↓"
+    end
+  end
+
+  describe "dilution profile rendering (LON-162)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "all-news card renders live severity from FilingAnalysis",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "DASHDIL"})
+      article = build_article_for_ticker(ticker, %{title: "Dashboard dilution test"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s3})
+      build_filing_analysis(filing, %{dilution_severity: :critical})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "💧"
+      assert html =~ "CRITICAL"
+    end
+
+    test "subscribes to filings:analyses and re-renders on :new_filing_analysis",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "DASHPUB"})
+      article = build_article_for_ticker(ticker, %{title: "Dashboard pubsub test"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      {:ok, view, html} = live(conn, ~p"/")
+      assert html =~ "UNKNOWN"
+
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s1})
+      analysis = build_filing_analysis(filing, %{dilution_severity: :high})
+
+      FilingsEvents.broadcast_analysis_ready(analysis)
+
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "HIGH"
+      refute html =~ "UNKNOWN"
     end
   end
 end

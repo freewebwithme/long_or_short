@@ -16,6 +16,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
   import LongOrShort.AnalysisFixtures
   import Phoenix.LiveViewTest
   import LongOrShort.AccountsFixtures
+  import LongOrShort.FilingsFixtures
   import LongOrShort.NewsFixtures
   import LongOrShort.TickersFixtures
   import AshAuthentication.Plug.Helpers, only: [store_in_session: 2]
@@ -24,6 +25,7 @@ defmodule LongOrShortWeb.FeedLiveTest do
   alias LongOrShort.News.Events
   alias LongOrShort.AI.MockProvider
   alias LongOrShort.Analysis.Events, as: AnalysisEvents
+  alias LongOrShort.Filings.Events, as: FilingsEvents
 
   setup do
     MockProvider.reset()
@@ -366,6 +368,59 @@ defmodule LongOrShortWeb.FeedLiveTest do
 
       assert html =~ "border-dashed"
       assert html =~ "Phase 1 stub"
+    end
+  end
+
+  describe "dilution profile rendering (LON-162)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      build_trading_profile(%{user_id: user.id})
+      conn = log_in_user(conn, user)
+      {:ok, conn: conn, user: user}
+    end
+
+    test "renders live severity from FilingAnalysis, not the at_analysis snapshot",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "DILTICK"})
+      article = build_article_for_ticker(ticker, %{title: "DILTICK news"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      # Stand-in for "Tier 2 has run and produced :critical" — the
+      # dilution pill should pick this up live via get_dilution_profile/1,
+      # regardless of whatever snapshot the news_analysis row carries.
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s3})
+      build_filing_analysis(filing, %{dilution_severity: :critical})
+
+      {:ok, _view, html} = live(conn, ~p"/feed")
+
+      # `💧` is the dilution pill emoji — appears only in news_card's
+      # dilution_pill. Combined with "CRITICAL" upper-cased text this
+      # uniquely identifies the live profile severity.
+      assert html =~ "💧"
+      assert html =~ "CRITICAL"
+    end
+
+    test "subscribes to filings:analyses and re-renders on :new_filing_analysis",
+         %{conn: conn, user: user} do
+      ticker = build_ticker(%{symbol: "PUBTICK"})
+      article = build_article_for_ticker(ticker, %{title: "PUBTICK news"})
+      build_news_analysis(%{article_id: article.id, user_id: user.id})
+
+      # No FilingAnalysis yet → live profile is :insufficient → pill shows UNKNOWN
+      {:ok, view, html} = live(conn, ~p"/feed")
+      assert html =~ "UNKNOWN"
+
+      # Tier 2 lands. Broadcast what FilingSeverityWorker (LON-136) would emit.
+      filing = build_filing_for_ticker(ticker, %{filing_type: :s1})
+      analysis = build_filing_analysis(filing, %{dilution_severity: :high})
+
+      FilingsEvents.broadcast_analysis_ready(analysis)
+
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "HIGH"
+      refute html =~ "UNKNOWN"
     end
   end
 
