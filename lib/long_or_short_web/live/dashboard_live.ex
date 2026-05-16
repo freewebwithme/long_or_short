@@ -234,7 +234,10 @@ defmodule LongOrShortWeb.DashboardLive do
      socket
      |> update(:analyzing_ids, &MapSet.delete(&1, article_id))
      |> reload_article_in_lists(article_id)
-     |> put_flash(:error, "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}")}
+     |> put_flash(
+       :error,
+       "Analysis failed: #{LongOrShortWeb.Live.AsyncAnalysis.format_error(reason)}"
+     )}
   end
 
   def handle_info({:watchlist_changed, _user_id}, socket) do
@@ -279,7 +282,9 @@ defmodule LongOrShortWeb.DashboardLive do
   end
 
   def handle_info({:briefing_started, _ticker_id, _request_id}, socket), do: {:noreply, socket}
-  def handle_info({:briefing_failed, _ticker_id, _reason, _request_id}, socket), do: {:noreply, socket}
+
+  def handle_info({:briefing_failed, _ticker_id, _reason, _request_id}, socket),
+    do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
@@ -290,13 +295,13 @@ defmodule LongOrShortWeb.DashboardLive do
           <.indices_card indices={@indices} />
           <.watchlist_card watchlist={@watchlist} />
         </div>
-
-    <!-- Morning Brief preview + Recent Scouts (side by side on lg+) -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        
+    <!-- Morning Brief preview + Recent Scouts (70/30 split on lg+) -->
+        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,6fr)_minmax(0,4fr)] gap-4">
           <.morning_brief_preview_card news={@morning_brief_preview} />
           <ScoutCard.recent_scouts_widget briefings={@recent_scouts} />
         </div>
-
+        
     <!-- Middle: search + ticker info/news -->
         <div class="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4">
           <.search_card query={@search_query} results={@search_results} />
@@ -697,7 +702,8 @@ defmodule LongOrShortWeb.DashboardLive do
       {:ok, %Ash.Page.Keyset{results: articles}} ->
         articles |> ArticleDedup.dedup() |> Enum.take(@news_limit)
 
-      _ -> []
+      _ ->
+        []
     end
   end
 
@@ -711,7 +717,6 @@ defmodule LongOrShortWeb.DashboardLive do
     |> Enum.uniq()
     |> Enum.each(&Analysis.Events.subscribe_for_article/1)
   end
-
 
   defp replace_article_in_lists(socket, %{id: id} = article) do
     socket
@@ -750,7 +755,11 @@ defmodule LongOrShortWeb.DashboardLive do
         # Preserve the existing row's multi-ticker symbols. The fresh
         # article only knows about its own ticker, so a naive replace
         # would shrink a `[A, B, C]` row down to `[A]`.
-        Map.put(new_row, :ticker_symbols, Map.get(existing, :ticker_symbols, new_row.ticker_symbols))
+        Map.put(
+          new_row,
+          :ticker_symbols,
+          Map.get(existing, :ticker_symbols, new_row.ticker_symbols)
+        )
 
       other ->
         other
@@ -820,7 +829,6 @@ defmodule LongOrShortWeb.DashboardLive do
       true -> "#{div(seconds, 86_400)}d"
     end
   end
-
 
   defp index_color(pct) do
     cond do
