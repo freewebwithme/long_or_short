@@ -50,6 +50,17 @@ defmodule LongOrShort.Research do
         get?: true,
         not_found_error?: false
 
+      # Rate-limit lookup (LON-174): returns the latest row regardless
+      # of `cached_until`. Used by `BriefingGenerator`'s force path to
+      # check `generated_at` against the 60s refresh window. Same
+      # `nil`-on-miss convention as `get_latest_briefing_for` so the
+      # Generator can pattern-match uniformly.
+      define :get_latest_row_for,
+        action: :get_latest_row_for,
+        args: [:symbol, :user_id],
+        get?: true,
+        not_found_error?: false
+
       define :list_recent_briefings_by_user,
         action: :by_user,
         args: [:user_id]

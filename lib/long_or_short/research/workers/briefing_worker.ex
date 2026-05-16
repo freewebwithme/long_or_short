@@ -17,7 +17,11 @@ defmodule LongOrShort.Research.Workers.BriefingWorker do
         "symbol" => "AAPL",
         "user_id" => "019e...",
         "request_id" => "01HX...",  # optional; auto-generated if omitted
-        "opts" => %{}                # optional Generator opts (model, max_searches)
+        "opts" => %{                # optional Generator opts
+          "model" => "...",
+          "max_searches" => 3,
+          "force" => true            # LON-174: bypass cache (rate-limited 1/60s)
+        }
       }
 
   Returns Oban's standard `:ok | {:error, term} | :discard`. The
@@ -101,9 +105,22 @@ defmodule LongOrShort.Research.Workers.BriefingWorker do
       :ok = Events.broadcast_ready(briefing, request_id)
       :ok
     else
-      {:error, reason} when reason in [:unknown_symbol, :no_trading_profile, :trading_profile_not_loaded] ->
+      {:error, reason}
+      when reason in [:unknown_symbol, :no_trading_profile, :trading_profile_not_loaded] ->
         Logger.warning(
           "BriefingWorker: discarding (#{inspect(reason)}) for symbol=#{symbol} user=#{user_id}"
+        )
+
+        :ok = Events.broadcast_failed(user_id, nil, reason, request_id)
+        {:discard, reason}
+
+      # LON-174: rate-limited refresh is a discard, not a retry. Oban's
+      # default backoff (~15s, 30s, 60s) overlaps the 60s window, so a
+      # retry could either fire just-too-soon or just-too-late. User
+      # retries by clicking Refresh again; the broadcast tells them.
+      {:error, {:rate_limited_refresh, _seconds_remaining} = reason} ->
+        Logger.info(
+          "BriefingWorker: refresh rate-limited for symbol=#{symbol} user=#{user_id} — #{inspect(reason)}"
         )
 
         :ok = Events.broadcast_failed(user_id, nil, reason, request_id)

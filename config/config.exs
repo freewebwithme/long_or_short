@@ -316,12 +316,16 @@ config :long_or_short, :morning_brief_provider, LongOrShort.AI.Providers.Claude
 # happen per-surface.
 config :long_or_short, :research_briefing_provider, LongOrShort.AI.Providers.Claude
 
-# Pre-Trade Briefing model (LON-179). Production default = Sonnet 4.6
-# for decision-grade output quality. Flip to `"claude-haiku-4-5-20251001"`
-# in `config/dev.exs` to test the ~3× cost cut + speed gain vs.
-# quality trade-off. `BriefingGenerator.resolve_model/0` reads this
-# key with a literal fallback, so an unset env doesn't crash.
-config :long_or_short, :research_briefing_model, "claude-sonnet-4-6"
+# Pre-Trade Briefing model (LON-179 / LON-174). Production default =
+# Haiku 4.5 — empirical Sonnet-vs-Haiku comparison (NVDA, LON-174
+# Phase 4) showed Haiku at ~7.5¢/call vs Sonnet ~17.8¢, 2.8× faster,
+# similar narrative length (~2,500 chars). Sonnet's larger output
+# token count doesn't translate to materially more actionable insight
+# at the small-cap day-trade decision tier this surface targets.
+# Flip to `"claude-sonnet-4-6"` per-env to A/B test quality.
+# `BriefingGenerator.resolve_model/0` reads this key with a literal
+# fallback, so an unset env doesn't crash.
+config :long_or_short, :research_briefing_model, "claude-haiku-4-5-20251001"
 
 # Filing-extraction model map (LON-113).
 #

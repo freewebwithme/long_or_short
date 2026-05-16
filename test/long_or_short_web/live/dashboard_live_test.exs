@@ -717,16 +717,18 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       assert html =~ "No scouts yet"
     end
 
-    test "renders the user's recent briefings with /scout/:symbol links", %{conn: conn, user: user} do
-      seed_widget_briefing(user, "WAAA")
-      seed_widget_briefing(user, "WBBB")
+    test "renders the user's recent briefings with detail-page links", %{conn: conn, user: user} do
+      waaa = seed_widget_briefing(user, "WAAA")
+      wbbb = seed_widget_briefing(user, "WBBB")
 
       {:ok, _live, html} = live(conn, ~p"/")
 
       assert html =~ "WAAA"
       assert html =~ "WBBB"
-      assert html =~ "/scout/WAAA"
-      assert html =~ "/scout/WBBB"
+      # Widget links to `/scout/b/:id` (detail page) so stale briefings
+      # always render their content.
+      assert html =~ "/scout/b/#{waaa.id}"
+      assert html =~ "/scout/b/#{wbbb.id}"
     end
 
     test "does not leak another user's briefings", %{conn: conn} do

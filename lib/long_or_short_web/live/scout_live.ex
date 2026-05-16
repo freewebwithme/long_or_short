@@ -117,31 +117,16 @@ defmodule LongOrShortWeb.ScoutLive do
     {:noreply, push_patch(socket, to: ~p"/scout")}
   end
 
-  def handle_event("run_scout", _, %{assigns: %{locked_symbol: nil}} = socket) do
-    {:noreply, socket}
+  def handle_event("run_scout", _, socket) do
+    {:noreply, start_briefing(socket, [])}
   end
 
-  def handle_event("run_scout", _, socket) do
-    cond do
-      is_nil(socket.assigns.current_user.trading_profile) ->
-        {:noreply,
-         socket
-         |> assign(:status, :error)
-         |> assign(:error_reason, :no_trading_profile)}
-
-      true ->
-        {request_id, _job_result} =
-          BriefingWorker.enqueue(socket.assigns.locked_symbol, socket.assigns.current_user.id)
-
-        schedule_tick()
-
-        {:noreply,
-         socket
-         |> assign(:status, :running)
-         |> assign(:active_request_id, request_id)
-         |> assign(:elapsed_seconds, 0)
-         |> assign(:error_reason, nil)}
-    end
+  # LON-174: force-refresh CTA on the result card. Same flow as run_scout
+  # but bypasses the DB cache via `force: true`. Server-side 60s rate
+  # limit (`BriefingGenerator`) catches abusive clicks; the failure
+  # broadcast surfaces as `:rate_limited_refresh` in the `:error` state.
+  def handle_event("refresh_scout", _, socket) do
+    {:noreply, start_briefing(socket, force: true)}
   end
 
   def handle_event("next_page", _, socket) do
@@ -258,8 +243,8 @@ defmodule LongOrShortWeb.ScoutLive do
           <ScoutCard.scout_no_profile_state :if={
             @locked_symbol && is_nil(@current_user.trading_profile)
           } />
-
-          <!-- State-machine driven body -->
+          
+    <!-- State-machine driven body -->
           <%= case @status do %>
             <% :idle -> %>
               <ScoutCard.scout_empty_state />
@@ -279,8 +264,8 @@ defmodule LongOrShortWeb.ScoutLive do
               />
           <% end %>
         </div>
-
-        <!-- RIGHT: history panel -->
+        
+    <!-- RIGHT: history panel -->
         <ScoutCard.recent_scouts_panel
           briefings={@history_results}
           more?={@history_more?}
@@ -293,6 +278,37 @@ defmodule LongOrShortWeb.ScoutLive do
   end
 
   # ── Helpers ─────────────────────────────────────────────────────
+
+  # Shared start path for `run_scout` (fresh) and `refresh_scout`
+  # (force=true). Guards a missing `locked_symbol` and a missing
+  # `trading_profile` before enqueueing. Extracted on the 2nd
+  # occurrence to keep both event handlers tiny.
+  defp start_briefing(%{assigns: %{locked_symbol: nil}} = socket, _opts), do: socket
+
+  defp start_briefing(socket, generator_opts) do
+    cond do
+      is_nil(socket.assigns.current_user.trading_profile) ->
+        socket
+        |> assign(:status, :error)
+        |> assign(:error_reason, :no_trading_profile)
+
+      true ->
+        {request_id, _job_result} =
+          BriefingWorker.enqueue(
+            socket.assigns.locked_symbol,
+            socket.assigns.current_user.id,
+            generator_opts: generator_opts
+          )
+
+        schedule_tick()
+
+        socket
+        |> assign(:status, :running)
+        |> assign(:active_request_id, request_id)
+        |> assign(:elapsed_seconds, 0)
+        |> assign(:error_reason, nil)
+    end
+  end
 
   defp reset_to_idle(socket) do
     socket
