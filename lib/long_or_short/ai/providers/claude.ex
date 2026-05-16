@@ -149,7 +149,7 @@ defmodule LongOrShort.AI.Providers.Claude do
   def call_with_search(messages, opts \\ []) do
     with {:ok, key} <- api_key(),
          body = build_search_body(messages, opts),
-         {:ok, response} <- ProviderHelper.post(client(key), @path, body),
+         {:ok, response} <- ProviderHelper.post(client(key, opts), @path, body),
          {:ok, response_body} <- ProviderHelper.dispatch(response) do
       normalize_search(response_body)
     end
@@ -157,14 +157,24 @@ defmodule LongOrShort.AI.Providers.Claude do
 
   # ─── HTTP ──────────────────────────────────────────────────────────
 
-  defp client(api_key) do
+  # `opts[:receive_timeout]` is threaded into the underlying `Req` client
+  # so per-call callers (Scout briefing → 180s, Morning Brief → default
+  # 60s) can opt for longer HTTP waits. `ProviderHelper.new_client/1`
+  # falls back to its 60s default when the key is absent. See LON-179
+  # for the timeout root cause analysis.
+  defp client(api_key, opts \\ []) do
     config = config()
 
-    ProviderHelper.new_client(
+    client_opts = [
       base_url: Keyword.fetch!(config, :base_url),
       headers: headers(api_key, config),
       req_plug: Keyword.get(config, :req_plug)
-    )
+    ]
+
+    case Keyword.get(opts, :receive_timeout) do
+      nil -> ProviderHelper.new_client(client_opts)
+      t -> ProviderHelper.new_client(Keyword.put(client_opts, :receive_timeout, t))
+    end
   end
 
   defp headers(api_key, config) do

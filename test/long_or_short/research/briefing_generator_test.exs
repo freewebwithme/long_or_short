@@ -20,7 +20,6 @@ defmodule LongOrShort.Research.BriefingGeneratorTest do
   import LongOrShort.AccountsFixtures
   import LongOrShort.TickersFixtures
 
-  alias LongOrShort.Research
   alias LongOrShort.Research.BriefingGenerator
   alias LongOrShort.Research.TickerBriefing
 
@@ -29,12 +28,19 @@ defmodule LongOrShort.Research.BriefingGeneratorTest do
   # ETS bag dedup quirks that bit us on LON-165.
   defmodule TestProvider do
     @counter_key {__MODULE__, :calls}
+    @last_opts_key {__MODULE__, :last_opts}
 
-    def init_counter, do: Process.put(@counter_key, :counters.new(1, []))
+    def init_counter do
+      Process.put(@counter_key, :counters.new(1, []))
+      Process.put(@last_opts_key, nil)
+    end
+
     def call_count, do: :counters.get(Process.get(@counter_key), 1)
+    def last_opts, do: Process.get(@last_opts_key)
 
-    def call_with_search(_messages, _opts) do
+    def call_with_search(_messages, opts) do
       :counters.add(Process.get(@counter_key), 1, 1)
+      Process.put(@last_opts_key, opts)
 
       {:ok,
        %{
@@ -125,6 +131,47 @@ defmodule LongOrShort.Research.BriefingGeneratorTest do
       assert TestProvider.call_count() == 1, "cache hit should not invoke the provider"
 
       _ = ticker
+    end
+  end
+
+  describe "generate/3 — LON-179 cost + timeout knobs" do
+    test "passes max_uses=3, max_tokens=2048, receive_timeout=180_000 by default", %{user: user} do
+      _ticker = build_ticker(%{symbol: "KNOBS"})
+
+      assert {:ok, _} = BriefingGenerator.generate("KNOBS", user)
+
+      opts = TestProvider.last_opts()
+      assert Keyword.get(opts, :max_uses) == 3
+      assert Keyword.get(opts, :max_tokens) == 2048
+      assert Keyword.get(opts, :receive_timeout) == 180_000
+    end
+
+    test "respects caller opt overrides", %{user: user} do
+      _ticker = build_ticker(%{symbol: "OVR"})
+
+      assert {:ok, _} =
+               BriefingGenerator.generate("OVR", user,
+                 max_searches: 1,
+                 max_tokens: 512,
+                 receive_timeout: 30_000
+               )
+
+      opts = TestProvider.last_opts()
+      assert Keyword.get(opts, :max_uses) == 1
+      assert Keyword.get(opts, :max_tokens) == 512
+      assert Keyword.get(opts, :receive_timeout) == 30_000
+    end
+
+    test "resolves model from :research_briefing_model config", %{user: user} do
+      prior = Application.get_env(:long_or_short, :research_briefing_model)
+      Application.put_env(:long_or_short, :research_briefing_model, "claude-haiku-4-5-20251001")
+      on_exit(fn -> Application.put_env(:long_or_short, :research_briefing_model, prior) end)
+
+      _ticker = build_ticker(%{symbol: "HAIKU"})
+
+      assert {:ok, briefing} = BriefingGenerator.generate("HAIKU", user)
+      assert briefing.model == "claude-haiku-4-5-20251001"
+      assert Keyword.get(TestProvider.last_opts(), :model) == "claude-haiku-4-5-20251001"
     end
   end
 
