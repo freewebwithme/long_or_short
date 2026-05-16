@@ -680,4 +680,74 @@ defmodule LongOrShortWeb.DashboardLiveTest do
       refute html =~ "UNKNOWN"
     end
   end
+
+  describe "recent scouts widget (LON-173)" do
+    setup %{conn: conn} do
+      user = build_trader_user()
+      _profile = build_trading_profile(%{user_id: user.id})
+      {:ok, conn: log_in_user(conn, user), user: user}
+    end
+
+    defp seed_widget_briefing(user, symbol) do
+      ticker = build_ticker(%{symbol: symbol})
+
+      {:ok, b} =
+        LongOrShort.Research.upsert_ticker_briefing(
+          %{
+            symbol: symbol,
+            narrative: "## TL;DR\n\nWidget briefing for #{symbol}.",
+            citations: [],
+            provider: :mock,
+            model: "mock-sonnet",
+            usage: %{},
+            cached_until: DateTime.add(DateTime.utc_now(), 600, :second),
+            trading_profile_snapshot: %{},
+            ticker_id: ticker.id,
+            generated_for_user_id: user.id
+          },
+          authorize?: false
+        )
+
+      b
+    end
+
+    test "renders empty placeholder when the user has no briefings", %{conn: conn} do
+      {:ok, _live, html} = live(conn, ~p"/")
+      assert html =~ "Recent scouts"
+      assert html =~ "No scouts yet"
+    end
+
+    test "renders the user's recent briefings with /scout/:symbol links", %{conn: conn, user: user} do
+      seed_widget_briefing(user, "WAAA")
+      seed_widget_briefing(user, "WBBB")
+
+      {:ok, _live, html} = live(conn, ~p"/")
+
+      assert html =~ "WAAA"
+      assert html =~ "WBBB"
+      assert html =~ "/scout/WAAA"
+      assert html =~ "/scout/WBBB"
+    end
+
+    test "does not leak another user's briefings", %{conn: conn} do
+      other_user = build_trader_user()
+      _other_profile = build_trading_profile(%{user_id: other_user.id})
+      seed_widget_briefing(other_user, "LEAK")
+
+      {:ok, _live, html} = live(conn, ~p"/")
+
+      refute html =~ "LEAK"
+    end
+
+    test "broadcasting :briefing_ready refreshes the widget", %{conn: conn, user: user} do
+      {:ok, live, html} = live(conn, ~p"/")
+      refute html =~ "REFRESH"
+
+      briefing = seed_widget_briefing(user, "REFRESH")
+      send(live.pid, {:briefing_ready, briefing.ticker_id, briefing.id, "any-request-id"})
+
+      html = render(live)
+      assert html =~ "REFRESH"
+    end
+  end
 end

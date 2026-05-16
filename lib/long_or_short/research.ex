@@ -34,6 +34,12 @@ defmodule LongOrShort.Research do
       define :create_ticker_briefing, action: :create
       define :upsert_ticker_briefing, action: :upsert
 
+      # Primary-key lookup — used by LiveView callbacks that receive
+      # a briefing_id via PubSub and need to load the full row.
+      define :get_ticker_briefing,
+        action: :read,
+        get_by: [:id]
+
       # Page-load path: caller asks "is there a fresh briefing for
       # (ticker, user)?". `get?: true` + not_found_error?: false so
       # the cache-miss branch in the Generator gets a plain nil
