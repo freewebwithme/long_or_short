@@ -108,5 +108,38 @@ defmodule LongOrShort.Trading do
         action: :read_today,
         args: [:user_id]
     end
+
+    resource LongOrShort.Trading.Note do
+      # Save today's daily-journal note — upsert by
+      # `(user_id, trading_date)`. Same action for first-save and
+      # subsequent edits. ET trading_date is server-computed.
+      define :save_note_for_today,
+        action: :save_for_today,
+        args: [:user_id, :body]
+
+      # Today's note, or `nil` — TW-3 LiveView mount path uses this
+      # to decide between rendering the saved body and an empty
+      # textarea draft.
+      define :get_note_for_today,
+        action: :read_today,
+        args: [:user_id],
+        get?: true,
+        not_found_error?: false
+
+      # Historical date lookup — Note history modal (TW-3) and
+      # retrospection (LON-176).
+      define :get_note_for_date,
+        action: :get_for_date,
+        args: [:user_id, :trading_date],
+        get?: true,
+        not_found_error?: false
+
+      # Inclusive date range, newest-first. Powers history view.
+      define :list_notes_by_date_range,
+        action: :by_date_range,
+        args: [:user_id, :from_date, :to_date]
+
+      define :destroy_note, action: :destroy
+    end
   end
 end
