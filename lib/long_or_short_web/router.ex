@@ -50,6 +50,8 @@ defmodule LongOrShortWeb.Router do
       live "/", DashboardLive, :index
       live "/feed", FeedLive, :index
       live "/morning", MorningBriefLive, :index
+      live "/scout", ScoutLive, :index
+      live "/scout/:symbol", ScoutLive, :show
       live "/analyze", AnalyzeLive, :new
       live "/analyze/:article_id", AnalyzeLive, :show
       live "/watchlist", WatchlistLive, :index

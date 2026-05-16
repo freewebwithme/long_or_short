@@ -87,6 +87,17 @@ defmodule LongOrShortWeb.Layouts do
           </li>
           <li>
             <.link
+              navigate={~p"/scout"}
+              class={[
+                "btn btn-ghost btn-sm",
+                String.starts_with?(@current_path || "", "/scout") && "btn-active"
+              ]}
+            >
+              Scout
+            </.link>
+          </li>
+          <li>
+            <.link
               navigate={~p"/analyze"}
               class={[
                 "btn btn-ghost btn-sm",

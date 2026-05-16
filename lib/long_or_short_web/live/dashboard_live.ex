@@ -27,15 +27,18 @@ defmodule LongOrShortWeb.DashboardLive do
   """
   use LongOrShortWeb, :live_view
 
-  alias LongOrShort.{Analysis, Indices, News, Tickers}
+  alias LongOrShort.{Analysis, Indices, News, Research, Tickers}
+  alias LongOrShort.Research.Events, as: ResearchEvents
   alias LongOrShort.Tickers.WatchlistEvents
   alias LongOrShortWeb.Format
   alias LongOrShortWeb.Live.{ArticleDedup, DilutionProfiles}
   alias LongOrShortWeb.Live.Components.ArticleComponents
   alias LongOrShortWeb.Live.Components.TickerAutocomplete
+  alias LongOrShortWeb.Live.Research.ScoutCard
   alias LongOrShortWeb.MorningBrief.Bucket
 
   @news_limit 10
+  @recent_scouts_limit 10
 
   @impl true
   def mount(_params, _session, socket) do
@@ -47,6 +50,7 @@ defmodule LongOrShortWeb.DashboardLive do
       Indices.Events.subscribe()
       WatchlistEvents.subscribe(actor.id)
       DilutionProfiles.subscribe()
+      ResearchEvents.subscribe_for_user(actor.id)
     end
 
     watchlist = load_watchlist(actor)
@@ -74,6 +78,7 @@ defmodule LongOrShortWeb.DashboardLive do
       |> assign(:active_ticker, nil)
       |> assign(:indices, %{})
       |> assign(:dilution_profiles, %{})
+      |> assign(:recent_scouts, load_recent_scouts(actor))
       |> refresh_dilution_profiles()
 
     {:ok, socket}
@@ -263,6 +268,19 @@ defmodule LongOrShortWeb.DashboardLive do
     {:noreply, update(socket, :indices, &Map.put(&1, label, payload))}
   end
 
+  # ── Recent Scouts widget (LON-173) ───────────────────────────────
+  # The widget refreshes whenever the user's `BriefingWorker` completes,
+  # so a freshly-run scout appears here without needing to navigate
+  # back to the dashboard. Failed / started broadcasts are no-ops for
+  # this surface — the widget only cares about persisted briefings.
+
+  def handle_info({:briefing_ready, _ticker_id, _briefing_id, _request_id}, socket) do
+    {:noreply, assign(socket, :recent_scouts, load_recent_scouts(socket.assigns.current_user))}
+  end
+
+  def handle_info({:briefing_started, _ticker_id, _request_id}, socket), do: {:noreply, socket}
+  def handle_info({:briefing_failed, _ticker_id, _reason, _request_id}, socket), do: {:noreply, socket}
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -273,8 +291,11 @@ defmodule LongOrShortWeb.DashboardLive do
           <.watchlist_card watchlist={@watchlist} />
         </div>
 
-    <!-- Morning Brief preview (full width) -->
-        <.morning_brief_preview_card news={@morning_brief_preview} />
+    <!-- Morning Brief preview + Recent Scouts (side by side on lg+) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <.morning_brief_preview_card news={@morning_brief_preview} />
+          <ScoutCard.recent_scouts_widget briefings={@recent_scouts} />
+        </div>
 
     <!-- Middle: search + ticker info/news -->
         <div class="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4">
@@ -612,6 +633,19 @@ defmodule LongOrShortWeb.DashboardLive do
     watchlist
     |> Enum.map(& &1.ticker_id)
     |> MapSet.new()
+  end
+
+  # Loads the user's most recent briefings for the dashboard widget
+  # (LON-173). Best-effort — empty list on any failure rather than
+  # blocking the whole dashboard render.
+  defp load_recent_scouts(actor) do
+    case Research.list_recent_briefings_by_user(actor.id,
+           actor: actor,
+           page: [limit: @recent_scouts_limit]
+         ) do
+      {:ok, %Ash.Page.Keyset{results: results}} -> results
+      _ -> []
+    end
   end
 
   defp load_news(actor) do
