@@ -40,7 +40,8 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
 
   # ── Main result card ─────────────────────────────────────────────
 
-  attr :briefing, :any, required: true,
+  attr :briefing, :any,
+    required: true,
     doc: "The `TickerBriefing` row to render."
 
   def scout_result_card(assigns) do
@@ -50,7 +51,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
       class="card bg-base-200 border border-base-300 p-4"
     >
       <.result_header briefing={@briefing} />
-      <article class="prose prose-sm max-w-none">
+      <article class="briefing-prose max-w-none">
         {render_markdown(@briefing.narrative)}
       </article>
       <.citations_section citations={@briefing.citations} />
@@ -78,7 +79,8 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
 
   # ── Status bar (running state) ───────────────────────────────────
 
-  attr :elapsed_seconds, :integer, required: true,
+  attr :elapsed_seconds, :integer,
+    required: true,
     doc: "Seconds since the worker was enqueued — drives the displayed timer."
 
   attr :symbol, :string, required: true
@@ -205,8 +207,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
     ~H"""
     <aside id="recent-scouts-panel" class="card bg-base-200 border border-base-300 p-4 h-full">
       <h2 class="text-sm font-semibold mb-3 flex items-center gap-2">
-        <.icon name="hero-clock" class="size-4 opacity-60" />
-        Recent scouts
+        <.icon name="hero-clock" class="size-4 opacity-60" /> Recent scouts
       </h2>
 
       <div :if={@briefings == []} class="text-xs opacity-60 italic">
@@ -216,7 +217,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
       <ul :if={@briefings != []} class="space-y-1.5">
         <li :for={b <- @briefings}>
           <.link
-            navigate={~p"/scout/#{b.symbol}"}
+            navigate={~p"/scout/b/#{b.id}"}
             class="block hover:bg-base-300/50 rounded px-2 py-1.5 transition"
           >
             <div class="flex items-baseline gap-2">
@@ -280,8 +281,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
     <div class="card bg-base-200 border border-base-300 p-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold flex items-center gap-2">
-          <.icon name="hero-magnifying-glass" class="size-4 opacity-60" />
-          Recent scouts
+          <.icon name="hero-magnifying-glass" class="size-4 opacity-60" /> Recent scouts
         </h2>
         <.link navigate={~p"/scout"} class="link link-hover text-xs opacity-70">
           All →
@@ -289,8 +289,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
       </div>
 
       <div :if={@briefings == []} class="text-xs opacity-60 italic">
-        No scouts yet —
-        <.link navigate={~p"/scout"} class="link link-hover">
+        No scouts yet — <.link navigate={~p"/scout"} class="link link-hover">
           run one
         </.link>.
       </div>
@@ -298,7 +297,7 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
       <ul :if={@briefings != []} class="space-y-1">
         <li :for={b <- @briefings}>
           <.link
-            navigate={~p"/scout/#{b.symbol}"}
+            navigate={~p"/scout/b/#{b.id}"}
             class="flex items-baseline justify-between hover:bg-base-300/50 rounded px-2 py-1 transition"
           >
             <span class="font-mono font-semibold text-sm">{b.symbol}</span>

@@ -51,6 +51,7 @@ defmodule LongOrShortWeb.Router do
       live "/feed", FeedLive, :index
       live "/morning", MorningBriefLive, :index
       live "/scout", ScoutLive, :index
+      live "/scout/b/:id", ScoutDetailLive, :show
       live "/scout/:symbol", ScoutLive, :show
       live "/analyze", AnalyzeLive, :new
       live "/analyze/:article_id", AnalyzeLive, :show
