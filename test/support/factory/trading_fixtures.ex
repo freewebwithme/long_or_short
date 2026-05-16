@@ -75,4 +75,27 @@ defmodule LongOrShort.TradingFixtures do
 
   defp default_name_for(:rules), do: "Daily rules"
   defp default_name_for(:setup), do: "Long setup"
+
+  @doc """
+  Builds a `LongOrShort.Trading.Note` for today via `:save_for_today`.
+
+  ## Overrides
+
+    * `:user_id` — owning user. Lazily creates a trader user if omitted.
+    * `:body` — initial body string. Defaults to a short placeholder.
+
+  Tests that need a specific historical `:trading_date` should use
+  the resource's `:create` action directly (mirroring how the
+  PlaybookCheckState tests pin past dates), since `:save_for_today`
+  locks the date to ET today.
+  """
+  def build_note(overrides \\ %{}) do
+    user_id = Map.get_lazy(overrides, :user_id, fn -> build_trader_user().id end)
+    body = Map.get(overrides, :body, "morning notes — placeholder")
+
+    case Trading.save_note_for_today(user_id, body, authorize?: false) do
+      {:ok, note} -> note
+      {:error, error} -> raise "build_note failed: #{inspect(error)}"
+    end
+  end
 end
