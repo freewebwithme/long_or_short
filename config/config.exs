@@ -316,6 +316,13 @@ config :long_or_short, :morning_brief_provider, LongOrShort.AI.Providers.Claude
 # happen per-surface.
 config :long_or_short, :research_briefing_provider, LongOrShort.AI.Providers.Claude
 
+# Pre-Trade Briefing model (LON-179). Production default = Sonnet 4.6
+# for decision-grade output quality. Flip to `"claude-haiku-4-5-20251001"`
+# in `config/dev.exs` to test the ~3× cost cut + speed gain vs.
+# quality trade-off. `BriefingGenerator.resolve_model/0` reads this
+# key with a literal fallback, so an unset env doesn't crash.
+config :long_or_short, :research_briefing_model, "claude-sonnet-4-6"
+
 # Filing-extraction model map (LON-113).
 #
 # Two-level mapping: provider module → tier atom → concrete model ID.

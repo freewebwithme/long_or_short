@@ -61,15 +61,34 @@ defmodule LongOrShort.Research.BriefingGenerator do
   alias LongOrShort.Research.TickerBriefing
   alias LongOrShort.Tickers
 
-  @default_model "claude-sonnet-4-6"
-  @default_max_searches 5
+  # Default model is read from app config so the trader can flip
+  # Sonnet ↔ Haiku without a code change. See `resolve_model/0`.
+  @fallback_model "claude-sonnet-4-6"
+
+  # LON-179 cost-tuning defaults. The 5-search default was empirically
+  # blowing input context past 30K tokens (web_search results stack on
+  # every turn); 3 is the empirical sweet spot for decision-grade
+  # briefings. `@default_max_output_tokens` caps the 7-section output —
+  # Sonnet was hitting ~2,650 tokens on NVDA, 2,048 forces tighter
+  # synthesis without truncating utility. `@default_receive_timeout_ms`
+  # gives Anthropic's internal `web_search` chain the wall-clock it
+  # legitimately needs (3-search Sonnet round-trip is 30-90s).
+  @default_max_searches 3
+  @default_max_output_tokens 2048
+  @default_receive_timeout_ms 180_000
 
   # PT-1 placeholder; PT-3 (LON-174) replaces with the time-of-day table.
   @default_ttl_minutes 10
   @recent_analyses_days 7
   @recent_analyses_limit 10
 
-  @type generate_opts :: [model: String.t(), max_searches: pos_integer(), et_now: DateTime.t()]
+  @type generate_opts :: [
+          model: String.t(),
+          max_searches: pos_integer(),
+          max_tokens: pos_integer(),
+          receive_timeout: pos_integer(),
+          et_now: DateTime.t()
+        ]
 
   @doc """
   Generate a briefing for `symbol` on behalf of `user`.
@@ -81,9 +100,14 @@ defmodule LongOrShort.Research.BriefingGenerator do
   ## Options
 
     * `:model` — provider model id. Defaults to
-      `#{inspect(@default_model)}` (env override planned for PT-3).
+      `Application.get_env(:long_or_short, :research_briefing_model)`,
+      falling back to `#{inspect(@fallback_model)}`. Flip to a Haiku
+      model id via dev/prod config to trade quality for cost.
     * `:max_searches` — server-side `web_search` cap (default
       #{@default_max_searches}).
+    * `:max_tokens` — output cap (default #{@default_max_output_tokens}).
+    * `:receive_timeout` — HTTP receive timeout in ms
+      (default #{@default_receive_timeout_ms}).
     * `:et_now` — wall-clock override for tests (production omits).
   """
   @spec generate(String.t(), Accounts.User.t(), generate_opts()) ::
@@ -133,14 +157,22 @@ defmodule LongOrShort.Research.BriefingGenerator do
   defp generate_fresh(ticker, user, profile, opts) do
     started_at = System.monotonic_time(:millisecond)
     et_now = Keyword.get_lazy(opts, :et_now, fn -> DateTime.utc_now() end)
-    model = Keyword.get(opts, :model, @default_model)
+    model = Keyword.get_lazy(opts, :model, &resolve_model/0)
     max_searches = Keyword.get(opts, :max_searches, @default_max_searches)
+    max_tokens = Keyword.get(opts, :max_tokens, @default_max_output_tokens)
+    receive_timeout = Keyword.get(opts, :receive_timeout, @default_receive_timeout_ms)
 
     context = build_context(ticker, user, et_now)
     messages = BriefingPrompts.build(ticker, profile, context)
 
     provider = provider_module()
-    provider_opts = [model: model, max_uses: max_searches]
+
+    provider_opts = [
+      model: model,
+      max_uses: max_searches,
+      max_tokens: max_tokens,
+      receive_timeout: receive_timeout
+    ]
 
     case provider.call_with_search(messages, provider_opts) do
       {:ok, response} ->
@@ -247,6 +279,14 @@ defmodule LongOrShort.Research.BriefingGenerator do
 
   defp provider_module do
     Application.fetch_env!(:long_or_short, :research_briefing_provider)
+  end
+
+  # Reads the configured Scout model with a literal fallback so an
+  # unconfigured env doesn't crash. Mirrors `MorningBrief.Generator`'s
+  # `resolve_model/0`. Flip dev/prod config to `"claude-haiku-4-5-20251001"`
+  # to test the Haiku quality trade-off (LON-179).
+  defp resolve_model do
+    Application.get_env(:long_or_short, :research_briefing_model, @fallback_model)
   end
 
   # ── Telemetry ───────────────────────────────────────────────────
