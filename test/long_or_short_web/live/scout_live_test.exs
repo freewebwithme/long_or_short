@@ -101,11 +101,14 @@ defmodule LongOrShortWeb.ScoutLiveTest do
     end
 
     test "renders existing briefings in the recent scouts panel", %{conn: conn, user: user} do
-      seed_briefing(user, "PANEL")
+      briefing = seed_briefing(user, "PANEL")
 
       {:ok, _live, html} = live(conn, ~p"/scout")
       assert html =~ "PANEL"
-      assert html =~ "/scout/PANEL"
+      # Recent-scouts panel links to the detail page (`/scout/b/:id`) so
+      # stale briefings render their content; symbol-routed pages would
+      # fall back to `:ready` for an expired cache. See ScoutDetailLive.
+      assert html =~ "/scout/b/#{briefing.id}"
     end
   end
 

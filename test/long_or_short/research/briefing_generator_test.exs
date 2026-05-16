@@ -196,4 +196,107 @@ defmodule LongOrShort.Research.BriefingGeneratorTest do
       assert TestProvider.call_count() == 0
     end
   end
+
+  # ── LON-174: TTL + force + cache-hit telemetry ──────────────────
+
+  describe "generate/3 — LON-174 force refresh" do
+    test "force: true bypasses an otherwise-fresh cache and re-invokes the provider", %{
+      user: user
+    } do
+      _ticker = build_ticker(%{symbol: "FORCE"})
+
+      # First call lands a fresh cached row.
+      assert {:ok, %TickerBriefing{} = first} = BriefingGenerator.generate("FORCE", user)
+      assert TestProvider.call_count() == 1
+
+      # `generated_at` is now() — rate limit will block force within 60s.
+      # Backdate the row so the force path proceeds.
+      backdate_generated_at(first, 120)
+
+      assert {:ok, %TickerBriefing{} = second} =
+               BriefingGenerator.generate("FORCE", user, force: true)
+
+      assert TestProvider.call_count() == 2, "force=true must hit the provider"
+      # Upsert identity is `(ticker_id, user_id)` — same row, new generated_at
+      assert second.id == first.id
+      assert DateTime.compare(second.generated_at, first.generated_at) == :gt
+    end
+
+    test "force: true within the 60s rate window returns {:rate_limited_refresh, n}", %{
+      user: user
+    } do
+      _ticker = build_ticker(%{symbol: "RATE"})
+
+      assert {:ok, _} = BriefingGenerator.generate("RATE", user)
+      assert TestProvider.call_count() == 1
+
+      # Immediate refresh — row's generated_at is well within 60s.
+      assert {:error, {:rate_limited_refresh, seconds_remaining}} =
+               BriefingGenerator.generate("RATE", user, force: true)
+
+      assert is_integer(seconds_remaining)
+      assert seconds_remaining > 0 and seconds_remaining <= 60
+      assert TestProvider.call_count() == 1, "rate-limited force must not hit the provider"
+    end
+  end
+
+  describe "generate/3 — LON-174 cache-hit telemetry" do
+    test "served_from_cache telemetry fires on a DB cache hit", %{user: user} do
+      handler_id = "briefing-cache-hit-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:long_or_short, :ticker_briefing, :served_from_cache],
+        fn _e, m, meta, _c -> send(test_pid, {:telemetry_cache_hit, m, meta}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      ticker = build_ticker(%{symbol: "HITTEL"})
+
+      # 1st call: cache miss — no cache-hit telemetry expected
+      assert {:ok, _} = BriefingGenerator.generate("HITTEL", user)
+      refute_received {:telemetry_cache_hit, _, _}
+
+      # 2nd call: cache hit — telemetry fires once
+      assert {:ok, _} = BriefingGenerator.generate("HITTEL", user)
+      assert_receive {:telemetry_cache_hit, %{count: 1}, %{ticker_id: tid, user_id: uid}}
+      assert tid == ticker.id
+      assert uid == user.id
+    end
+  end
+
+  describe "generate/3 — LON-174 bucketed TTL" do
+    test "cached_until honors the BriefingFreshness policy for the supplied et_now", %{
+      user: user
+    } do
+      _ticker = build_ticker(%{symbol: "TTL"})
+
+      # 12:00 UTC on a weekday → 08:00 ET (EDT, premarket window, 5min TTL)
+      premarket_now = ~U[2026-05-13 12:00:00Z]
+
+      assert {:ok, briefing} = BriefingGenerator.generate("TTL", user, et_now: premarket_now)
+
+      # cached_until = et_now + 5min = 12:05:00 UTC
+      expected = DateTime.add(premarket_now, 5 * 60, :second)
+      # Allow a 2-second window for the upsert round-trip
+      assert DateTime.diff(briefing.cached_until, expected, :second) |> abs() <= 2
+    end
+  end
+
+  # ── Helpers ─────────────────────────────────────────────────────
+
+  # Rewinds `generated_at` so the force path can proceed past the
+  # 60s rate-limit. Uses the default :update action with
+  # `authorize?: false` (default-deny policies block real callers).
+  defp backdate_generated_at(%TickerBriefing{} = b, seconds_ago) do
+    new_ts = DateTime.add(DateTime.utc_now(), -seconds_ago, :second)
+
+    b
+    |> Ash.Changeset.for_update(:update, %{})
+    |> Ash.Changeset.force_change_attribute(:generated_at, new_ts)
+    |> Ash.update!(authorize?: false)
+  end
 end

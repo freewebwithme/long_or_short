@@ -63,7 +63,10 @@ defmodule LongOrShortWeb.Telemetry do
   # per-query plumbing. See LON-169.
   defp maybe_console_reporter do
     if Mix.env() == :dev do
-      [{Telemetry.Metrics.ConsoleReporter, metrics: console_metrics(), reporter_options: [print_summary: false]}]
+      [
+        {Telemetry.Metrics.ConsoleReporter,
+         metrics: console_metrics(), reporter_options: [print_summary: false]}
+      ]
     else
       []
     end
@@ -293,6 +296,15 @@ defmodule LongOrShortWeb.Telemetry do
       ),
       counter("long_or_short.ticker_briefing.generation_failed.duration_ms",
         tags: [:reason]
+      ),
+      # LON-174: DB cache hit — no LLM call, no duration to measure.
+      # Pair with `…generated.duration_ms` counter to eyeball the hit
+      # rate (hits / (hits + misses)) over a window.
+      counter("long_or_short.ticker_briefing.served_from_cache.count",
+        description: "DB cache hit — briefing served without an LLM call"
+      ),
+      sum("long_or_short.ticker_briefing.served_from_cache.count",
+        description: "Cumulative cache-hit count"
       )
 
       # ── Skipped emits ────────────────────────────────────────────

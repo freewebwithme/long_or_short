@@ -201,7 +201,13 @@ defmodule LongOrShort.Research.TickerBriefing do
   ]
 
   actions do
-    defaults [:read, :destroy]
+    # `:update` is enabled to support out-of-band attribute changes
+    # (e.g. test helpers that need to backdate `generated_at`).
+    # Default-deny via policies: no `policy action_type(:update)`
+    # block below means non-bypassed actors are rejected. The
+    # Generator persists fresh rows via `:upsert` (not `:update`),
+    # so the production code path is unaffected.
+    defaults [:read, :destroy, :update]
 
     create :create do
       primary? true
@@ -244,6 +250,29 @@ defmodule LongOrShort.Research.TickerBriefing do
                symbol == ^arg(:symbol) and
                  generated_for_user_id == ^arg(:user_id) and
                  cached_until > now()
+             )
+    end
+
+    read :get_latest_row_for do
+      description """
+      The most-recently-generated row for `(symbol, user_id)`
+      **regardless of freshness**, or `nil` if none exists.
+
+      Powers the LON-174 force-refresh rate limit: the limit must
+      look at when generation actually happened (`generated_at`),
+      not at the freshness window (`cached_until`), because a user
+      could otherwise dodge the limit by waiting for the TTL to
+      expire. The `unique_ticker_user_active` identity guarantees
+      at most one row per `(ticker, user)`, so this is `get?: true`.
+      """
+
+      get? true
+      argument :symbol, :string, allow_nil?: false
+      argument :user_id, :uuid_v7, allow_nil?: false
+
+      filter expr(
+               symbol == ^arg(:symbol) and
+                 generated_for_user_id == ^arg(:user_id)
              )
     end
 

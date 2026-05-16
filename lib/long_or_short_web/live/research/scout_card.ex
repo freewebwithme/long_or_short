@@ -62,6 +62,8 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
   attr :briefing, :any, required: true
 
   defp result_header(assigns) do
+    assigns = assign(assigns, :refresh_disabled?, refresh_within_rate_limit?(assigns.briefing))
+
     ~H"""
     <div class="text-xs opacity-60 mb-3 flex items-center gap-2 flex-wrap">
       <span class="font-semibold text-base">{@briefing.symbol}</span>
@@ -73,6 +75,19 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
       <span class="opacity-70">{@briefing.model}</span>
       <span :if={fresh?(@briefing)} class="badge badge-success badge-sm ml-auto">fresh</span>
       <span :if={!fresh?(@briefing)} class="badge badge-warning badge-sm ml-auto">stale</span>
+      <button
+        type="button"
+        phx-click="refresh_scout"
+        class="btn btn-xs btn-ghost"
+        disabled={@refresh_disabled?}
+        title={
+          if @refresh_disabled?,
+            do: "Wait a moment before refreshing",
+            else: "Force a fresh briefing"
+        }
+      >
+        <.icon name="hero-arrow-path" class="size-3" /> Refresh
+      </button>
     </div>
     """
   end
@@ -194,6 +209,10 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
   defp format_reason(:unknown_symbol), do: "Ticker not found in our universe."
   defp format_reason(:no_trading_profile), do: "Trader profile required — set one up at /profile."
   defp format_reason({:rate_limited, _}), do: "AI provider rate limit hit. Try again in a minute."
+
+  defp format_reason({:rate_limited_refresh, seconds}),
+    do: "You can refresh again in #{max(seconds, 1)}s."
+
   defp format_reason(reason), do: inspect(reason)
 
   # ── Recent scouts panel (right side) ─────────────────────────────
@@ -350,6 +369,17 @@ defmodule LongOrShortWeb.Live.Research.ScoutCard do
     do: DateTime.compare(cu, DateTime.utc_now()) == :gt
 
   defp fresh?(_), do: false
+
+  # LON-174: client-side hint mirroring the server's 60s rate limit so
+  # the button greys out before the user clicks. Server is still
+  # authoritative — a stale assigns or a multi-tab refresh would still
+  # be caught by `BriefingGenerator.cache_or_force/3`.
+  @refresh_rate_limit_seconds 60
+  defp refresh_within_rate_limit?(%{generated_at: %DateTime{} = gen_at}) do
+    DateTime.diff(DateTime.utc_now(), gen_at, :second) < @refresh_rate_limit_seconds
+  end
+
+  defp refresh_within_rate_limit?(_), do: false
 
   defp first_line(content) when is_binary(content) do
     content
