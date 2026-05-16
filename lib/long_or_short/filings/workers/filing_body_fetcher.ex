@@ -14,6 +14,18 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
   `LongOrShort.Filings.BodyFetcher.fetch_body/1` →
   `LongOrShort.Filings.create_filing_raw/2`.
 
+  ## Universe scope (LON-178)
+
+  Only Filings whose ticker is in the active small-cap universe
+  (`Tickers.small_cap_ticker_ids/0`) are fetched. Mirrors the scope
+  of `FilingAnalysisWorker` — the downstream consumer — so we don't
+  pay the SEC HTTP cost and the `filings_raw` storage for bodies
+  the analysis stage will ignore (large-cap `_424b2` shelf
+  takedowns were the bellwether, ~1.25% hit rate).
+
+  Empty universe → soft no-op; same early-exit shape as
+  `FilingAnalysisWorker.perform/1`.
+
   ## Idempotency
 
   Two layers:
@@ -52,6 +64,7 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
   alias LongOrShort.Accounts.SystemActor
   alias LongOrShort.Filings
   alias LongOrShort.Filings.{BodyFetcher, Filing}
+  alias LongOrShort.Tickers
   alias LongOrShort.Workers.BatchHelper
 
   @batch_size 100
@@ -59,14 +72,21 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
 
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
-    pending = find_pending_filings(@batch_size)
-    total = length(pending)
+    case Tickers.small_cap_ticker_ids() do
+      [] ->
+        Logger.debug("FilingBodyFetcher: small-cap universe is empty")
+        :ok
 
-    if total == 0 do
-      Logger.debug("FilingBodyFetcher: no pending filings")
-      :ok
-    else
-      run_batch(pending, total)
+      ticker_ids ->
+        pending = find_pending_filings(ticker_ids, @batch_size)
+        total = length(pending)
+
+        if total == 0 do
+          Logger.debug("FilingBodyFetcher: no pending filings on universe tickers")
+          :ok
+        else
+          run_batch(pending, total)
+        end
     end
   end
 
@@ -82,9 +102,9 @@ defmodule LongOrShort.Filings.Workers.FilingBodyFetcher do
     :ok
   end
 
-  defp find_pending_filings(limit) do
+  defp find_pending_filings(ticker_ids, limit) do
     Filing
-    |> Ash.Query.filter(is_nil(filing_raw))
+    |> Ash.Query.filter(ticker_id in ^ticker_ids and is_nil(filing_raw))
     |> Ash.Query.sort(filed_at: :asc)
     |> Ash.Query.limit(limit)
     |> Ash.read!(actor: SystemActor.new())
