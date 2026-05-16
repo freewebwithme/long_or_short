@@ -153,7 +153,8 @@ config :long_or_short,
     LongOrShort.Analysis,
     LongOrShort.Filings,
     LongOrShort.Settings,
-    LongOrShort.Research
+    LongOrShort.Research,
+    LongOrShort.Trading
   ]
 
 # Configure the endpoint
