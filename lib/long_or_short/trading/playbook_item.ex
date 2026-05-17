@@ -63,7 +63,14 @@ defmodule LongOrShort.Trading.PlaybookItem do
 
     create :create do
       primary? true
-      accept [:text]
+      # `:id` is accepted so callers (e.g. the LON-184 edit UI) can
+      # round-trip an existing item's UUID through a hidden form field.
+      # Without this, every save would generate a fresh UUID and
+      # invalidate the `PlaybookCheckState.checked_items` keys for
+      # today's checks — the very thing the embed design was supposed
+      # to preserve. If `:id` is omitted, the `uuid_v7_primary_key`
+      # default fires server-side as usual.
+      accept [:id, :text]
     end
 
     update :update do

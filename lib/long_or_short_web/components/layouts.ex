@@ -134,6 +134,7 @@ defmodule LongOrShortWeb.Layouts do
               </div>
             </li>
             <li><.link navigate={~p"/profile"}>Profile</.link></li>
+            <li><.link navigate={~p"/playbook"}>Playbook</.link></li>
             <li><.link navigate={~p"/settings"}>Settings</.link></li>
             <li>
               <.link href={~p"/sign-out"} method="delete">Sign out</.link>
