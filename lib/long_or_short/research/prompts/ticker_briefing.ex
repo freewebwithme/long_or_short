@@ -56,21 +56,27 @@ defmodule LongOrShort.Research.Prompts.TickerBriefing do
       `Tickers.get_dilution_profile/1`, or `nil` when unavailable
     * `:recent_news_analyses` — list of recent `NewsAnalysis` rows
       (default `[]`)
+    * `:playbook` — pre-rendered Markdown from
+      `LongOrShort.Trading.Format.format_playbook_for_prompt/2`, or
+      `""` when the trader has no active Playbook. Splices into the
+      system message between persona and search rules (LON-185).
     * `:et_now` — DateTime override for tests; production omits this
 
   Returns `[system_msg, user_msg]`.
   """
   @spec build(map(), map(), map()) :: [map()]
   def build(ticker, profile, context \\ %{}) do
+    playbook = Map.get(context, :playbook, "")
+
     [
-      %{role: "system", content: system_prompt(profile)},
+      %{role: "system", content: system_prompt(profile, playbook)},
       %{role: "user", content: user_prompt(ticker, context)}
     ]
   end
 
   # ── System prompt (stable across calls for the same trader) ─────
 
-  defp system_prompt(profile) do
+  defp system_prompt(profile, playbook) do
     """
     You are an on-demand research analyst preparing a single-ticker
     briefing for a #{Persona.intro(profile.trading_style)} who is
@@ -80,7 +86,7 @@ defmodule LongOrShort.Research.Prompts.TickerBriefing do
 
     Trader profile:
     #{Persona.render_profile_lines(profile)}
-
+    #{playbook_section(playbook)}
     #{search_rules()}
 
     #{output_format()}
@@ -89,6 +95,31 @@ defmodule LongOrShort.Research.Prompts.TickerBriefing do
     #{Persona.render_notes(profile.notes)}
     Speak like a trader, not an analyst. Korean is welcome where it
     reads naturally — the trader is bilingual.
+    """
+  end
+
+  # LON-185: splice the trader's active Playbook into the system
+  # message when present. Empty string when the trader has no
+  # Playbook — system prompt degrades silently (no header, no
+  # instruction) so the LLM doesn't reference a section that
+  # isn't there.
+  defp playbook_section(""), do: ""
+
+  defp playbook_section(playbook) when is_binary(playbook) do
+    """
+
+
+    #{playbook}
+
+    Use the Playbook above as decision context:
+      * In **Risk Factors**, prioritize risks that would violate the
+        trader's stated rules or setup criteria (price band, float
+        cap, market regime, catalyst type). Name the matching rule
+        explicitly — "Rules say no choppy trades; ADX is 12. Skip."
+        beats a generic volatility warning.
+      * In **Position Sizing Note**, reference the setup checklist
+        items that are most relevant for this ticker's current
+        state, not just the trader's general profile.
     """
   end
 

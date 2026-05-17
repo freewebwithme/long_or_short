@@ -299,4 +299,115 @@ defmodule LongOrShort.Research.BriefingGeneratorTest do
     |> Ash.Changeset.force_change_attribute(:generated_at, new_ts)
     |> Ash.update!(authorize?: false)
   end
+
+  # ── LON-185: playbook snapshot ──────────────────────────────────
+
+  describe "generate/3 — playbook snapshot (LON-185)" do
+    test "user with no Playbook → snapshot is empty map, briefing generates normally",
+         %{user: user} do
+      _ticker = build_ticker(%{symbol: "NOPB"})
+
+      assert {:ok, briefing} = BriefingGenerator.generate("NOPB", user)
+      assert briefing.playbook_snapshot == %{}
+
+      # The prompt the LLM saw should NOT mention "Trader's Playbook"
+      # — empty-string degradation contract.
+      refute Keyword.get(TestProvider.last_opts(), :model) == nil
+      # (The full prompt content isn't passed through to opts; the
+      # prompt-injection assertion lives in ticker_briefing_test.exs.
+      # Here we just confirm the snapshot persisted is empty.)
+    end
+
+    test "user with active Playbook → snapshot freezes rendered + structured shape",
+         %{user: user} do
+      # Seed two active playbooks for this user
+      {:ok, _rules} =
+        LongOrShort.Trading.create_playbook_version(
+          user.id,
+          :rules,
+          "Daily rules",
+          [%{text: "Daily max loss $160"}, %{text: "No revenge trades"}],
+          authorize?: false
+        )
+
+      {:ok, _setup} =
+        LongOrShort.Trading.create_playbook_version(
+          user.id,
+          :setup,
+          "Long setup",
+          [%{text: "Price $2-$10"}, %{text: "Above VWAP"}],
+          authorize?: false
+        )
+
+      _ticker = build_ticker(%{symbol: "PBSNAP"})
+
+      assert {:ok, briefing} = BriefingGenerator.generate("PBSNAP", user)
+
+      snapshot = briefing.playbook_snapshot
+
+      # Snapshot has the two top-level keys (jsonb round-trip → string keys)
+      assert is_binary(snapshot["rendered"])
+      assert snapshot["rendered"] =~ "Trader's Playbook"
+      assert snapshot["rendered"] =~ "Daily max loss $160"
+      assert snapshot["rendered"] =~ "**Long setup**"
+
+      # Structured playbook list — sorted by [kind, name] from list_active_playbooks
+      assert [rules_pb, setup_pb] = snapshot["playbooks"]
+
+      assert rules_pb["kind"] == "rules"
+      assert rules_pb["name"] == "Daily rules"
+      assert rules_pb["version"] == 1
+      assert length(rules_pb["items"]) == 2
+
+      # Each item carries its UUID (the keystone for LON-176 retrospection)
+      [item1, _item2] = rules_pb["items"]
+      assert is_binary(item1["id"])
+      assert byte_size(item1["id"]) == 36
+      assert item1["text"] == "Daily max loss $160"
+
+      assert setup_pb["kind"] == "setup"
+      assert setup_pb["name"] == "Long setup"
+    end
+
+    test "snapshot is refreshed on re-generation via force (not frozen from first call)",
+         %{user: user} do
+      # v1 playbook
+      {:ok, _} =
+        LongOrShort.Trading.create_playbook_version(
+          user.id,
+          :rules,
+          "Daily rules",
+          [%{text: "v1 rule"}],
+          authorize?: false
+        )
+
+      _ticker = build_ticker(%{symbol: "REGEN"})
+
+      assert {:ok, first} = BriefingGenerator.generate("REGEN", user)
+      assert hd(first.playbook_snapshot["playbooks"])["items"]
+             |> List.first()
+             |> Map.get("text") == "v1 rule"
+
+      # Trader edits the playbook between calls
+      {:ok, _} =
+        LongOrShort.Trading.create_playbook_version(
+          user.id,
+          :rules,
+          "Daily rules",
+          [%{text: "v2 rule — refined"}],
+          authorize?: false
+        )
+
+      # Backdate to clear LON-174 60s rate-limit
+      backdate_generated_at(first, 120)
+
+      assert {:ok, second} = BriefingGenerator.generate("REGEN", user, force: true)
+
+      # Same row (unique_ticker_user_active identity), refreshed snapshot
+      assert second.id == first.id
+      assert hd(second.playbook_snapshot["playbooks"])["items"]
+             |> List.first()
+             |> Map.get("text") == "v2 rule — refined"
+    end
+  end
 end
