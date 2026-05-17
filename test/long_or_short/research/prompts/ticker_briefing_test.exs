@@ -157,4 +157,67 @@ defmodule LongOrShort.Research.Prompts.TickerBriefingTest do
       assert system.content =~ "Maximum 5 search calls"
     end
   end
+
+  # ── LON-185: playbook injection ──────────────────────────────
+
+  describe "build/3 — playbook injection" do
+    test "no :playbook key → system message has no Trader's Playbook header" do
+      [system, _] = TickerBriefing.build(ticker(), profile(), %{})
+
+      refute system.content =~ "Trader's Playbook"
+      refute system.content =~ "Use the Playbook above"
+    end
+
+    test "empty-string :playbook → system message has no Trader's Playbook header" do
+      [system, _] = TickerBriefing.build(ticker(), profile(), %{playbook: ""})
+
+      refute system.content =~ "Trader's Playbook"
+      refute system.content =~ "Use the Playbook above"
+    end
+
+    test "populated :playbook → splices verbatim into system, with LLM instruction" do
+      playbook_md = """
+      ## Trader's Playbook
+
+      ### Daily Rules
+
+      - Daily max loss $160
+      - 2회 연속 손절 시 거래 종료
+
+      **Long setup**
+      - Price $2-$10
+      """
+
+      [system, user] = TickerBriefing.build(ticker(), profile(), %{playbook: playbook_md})
+
+      # Playbook content lands verbatim
+      assert system.content =~ "## Trader's Playbook"
+      assert system.content =~ "Daily max loss $160"
+      assert system.content =~ "2회 연속 손절"
+      assert system.content =~ "**Long setup**"
+
+      # LLM instruction immediately follows so the model knows what to do with it
+      assert system.content =~ "Use the Playbook above as decision context"
+      assert system.content =~ "Risk Factors"
+      assert system.content =~ "Position Sizing Note"
+
+      # Playbook stays system-side (prompt-caching invariant, LON-174)
+      refute user.content =~ "Trader's Playbook"
+      refute user.content =~ "Daily max loss"
+    end
+
+    test "playbook section sits between persona and search rules in the system message" do
+      playbook_md = "## Trader's Playbook\n\nrule A\n"
+
+      [system, _] = TickerBriefing.build(ticker(), profile(), %{playbook: playbook_md})
+
+      # Index ordering — persona → playbook → search rules
+      persona_pos = :binary.match(system.content, "Trader profile") |> elem(0)
+      playbook_pos = :binary.match(system.content, "Trader's Playbook") |> elem(0)
+      search_pos = :binary.match(system.content, "Search rules") |> elem(0)
+
+      assert persona_pos < playbook_pos
+      assert playbook_pos < search_pos
+    end
+  end
 end

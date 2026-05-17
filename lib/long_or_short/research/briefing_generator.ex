@@ -260,7 +260,12 @@ defmodule LongOrShort.Research.BriefingGenerator do
   defp build_context(ticker, user, _et_now) do
     %{
       dilution_profile: load_dilution_profile(ticker),
-      recent_news_analyses: load_recent_analyses(ticker.id, user.id)
+      recent_news_analyses: load_recent_analyses(ticker.id, user.id),
+      # LON-185: render the trader's active Playbook for prompt
+      # injection. Returns `""` when the user has no Playbook —
+      # `Prompts.TickerBriefing` handles the empty case by skipping
+      # the section entirely (no orphan header, no LLM confusion).
+      playbook: LongOrShort.Trading.Format.format_playbook_for_prompt(user.id)
     }
   end
 
@@ -328,6 +333,7 @@ defmodule LongOrShort.Research.BriefingGenerator do
       usage: jsonb(usage),
       cached_until: DateTime.add(et_now, ttl_seconds, :second),
       trading_profile_snapshot: profile_snapshot(profile),
+      playbook_snapshot: playbook_snapshot(user.id),
       ticker_id: ticker.id,
       generated_for_user_id: user.id
     }
@@ -345,6 +351,37 @@ defmodule LongOrShort.Research.BriefingGenerator do
       :notes
     ])
     |> jsonb()
+  end
+
+  # LON-185: freeze the trader's active Playbook at generation time.
+  # `:rendered` is the markdown that landed in the LLM prompt
+  # (replay/debug); `:playbooks` is the structural shape that
+  # Post-Trade Review ([[LON-176]]) joins on via item UUIDs.
+  # Returns `%{}` when the user has no active Playbook — UI render
+  # can skip the "based on your Playbook" hint without a nil check.
+  defp playbook_snapshot(user_id) do
+    case LongOrShort.Trading.list_active_playbooks(user_id, authorize?: false) do
+      {:ok, []} ->
+        %{}
+
+      {:ok, playbooks} ->
+        %{
+          rendered: LongOrShort.Trading.Format.format_playbook_for_prompt(user_id),
+          playbooks:
+            Enum.map(playbooks, fn pb ->
+              %{
+                kind: pb.kind,
+                name: pb.name,
+                version: pb.version,
+                items: Enum.map(pb.items, &%{id: &1.id, text: &1.text})
+              }
+            end)
+        }
+        |> jsonb()
+
+      _ ->
+        %{}
+    end
   end
 
   # Round-trip through Jason so atom keys / Decimal / DateTime all

@@ -160,6 +160,29 @@ defmodule LongOrShort.Research.TickerBriefing do
       """
     end
 
+    attribute :playbook_snapshot, :map do
+      allow_nil? false
+      public? true
+      default %{}
+
+      description """
+      Frozen `Trading.Playbook` snapshot at generation time (LON-185).
+      Shape: `%{"rendered" => "<markdown for prompt>", "playbooks" =>
+      [%{"kind", "name", "version", "items" => [%{"id", "text"}]}]}`.
+
+      The `:rendered` string is what got injected into the LLM
+      prompt's system message — useful for replay / debugging
+      ("what did the AI actually see?"). The `:playbooks` array is
+      the structural truth used by Post-Trade Review ([[LON-176]])
+      to ask "was rule #3 checked when this briefing was generated?"
+      via the item UUIDs.
+
+      Empty `%{}` when the user had no active Playbook (no Trading
+      Workspace setup yet). UI render can skip the "based on your
+      Playbook" hint in that case.
+      """
+    end
+
     attribute :generated_at, :utc_datetime_usec do
       allow_nil? false
       public? true
@@ -196,6 +219,7 @@ defmodule LongOrShort.Research.TickerBriefing do
     :usage,
     :cached_until,
     :trading_profile_snapshot,
+    :playbook_snapshot,
     :ticker_id,
     :generated_for_user_id
   ]
@@ -229,6 +253,7 @@ defmodule LongOrShort.Research.TickerBriefing do
         :usage,
         :cached_until,
         :trading_profile_snapshot,
+        :playbook_snapshot,
         :generated_at
       ]
 
